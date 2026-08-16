@@ -26,6 +26,9 @@ import ContactsPage from './pages/ContactsPage';
 import CompaniesPage from './pages/CompaniesPage';
 import PipelinePage from './pages/PipelinePage';
 import PaymentsPage from './pages/PaymentsPage';
+import RolesPage from './pages/RolesPage';
+import PermissionsPage from './pages/PermissionsPage';
+import JtsPortalSection from './jts/JtsPortalSection';
 import { companySeed, contactSeed, leadSeed, opportunitySeed, paymentSeed } from './data/crmData';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
@@ -37,6 +40,9 @@ const NAV_ITEMS = [
   { key: 'companies', label: 'Companies', Icon: Building2 },
   { key: 'pipeline', label: 'Pipeline', Icon: BarChart3 },
   { key: 'payments', label: 'Payments', Icon: CreditCard },
+  { key: 'roles', label: 'Roles', Icon: ShieldCheck, adminOnly: true },
+  { key: 'permissions', label: 'Permissions', Icon: Lock, adminOnly: true },
+  { key: 'jts-portal', label: 'JTS Portal', Icon: Database },
 ];
 
 export default function App() {
@@ -60,29 +66,13 @@ export default function App() {
   const [companyDetailOpen, setCompanyDetailOpen] = useState(false);
   const [leadDetailRequest, setLeadDetailRequest] = useState('');
   const [usingBackendData, setUsingBackendData] = useState(false);
+  const [permissionRole, setPermissionRole] = useState(null);
   const [opportunityStageConfig, setOpportunityStageConfig] = useState({
     id: '', mode: 'standard', fields: [], records: [],
   });
 
   useEffect(() => {
-    let isMounted = true;
-
-    async function checkSession() {
-      try {
-        const response = await authRequest('/api/me/');
-        if (!isMounted) return;
-        if (response.success) {
-          setCurrentUser(response.data);
-        }
-      } catch {
-        if (isMounted) setCurrentUser(null);
-      } finally {
-        if (isMounted) setAuthStatus('ready');
-      }
-    }
-
-    checkSession();
-    return () => { isMounted = false; };
+    setAuthStatus('ready');
   }, []);
 
   const isErrorMessage = message.includes('required') || message.includes('exists');
@@ -92,44 +82,45 @@ export default function App() {
     const timer = window.setTimeout(() => setMessage(''), 4000);
     return () => window.clearTimeout(timer);
   }, [message]);
-
-  useEffect(() => {
-    if (!currentUser) return undefined;
-    let isMounted = true;
-
-    async function loadBackendWorkspace() {
-      try {
-        const [leadsResponse, contactsResponse, companiesResponse, opportunitiesResponse, pipelineResponse] = await Promise.all([
-          apiGet('/api/leads/?page_size=100'),
-          apiGet('/api/contacts/?page_size=100'),
-          apiGet('/api/companies/?page_size=100'),
-          apiGet('/api/opportunities/?page_size=100'),
-          apiGet('/api/pipeline/'),
-        ]);
-
-        if (!isMounted) return;
-
-        const backendLeads = extractApiResults(leadsResponse).map(mapBackendLead);
-        const backendContacts = extractApiResults(contactsResponse).map(mapBackendContact);
-        const backendCompanies = extractApiResults(companiesResponse).map(mapBackendCompany);
-        const backendOpportunities = extractApiResults(opportunitiesResponse).map(mapBackendOpportunity);
-        const backendPipelineCards = extractApiResults(pipelineResponse);
-
-        setLeads(backendLeads);
-        setContacts(backendContacts);
-        setCompanies(backendCompanies);
-        setOpportunities(mergePipelineCardsIntoOpportunities(backendOpportunities, backendPipelineCards));
-        setUsingBackendData(true);
-      } catch (err) {
-        if (!isMounted) return;
-        setUsingBackendData(false);
-        setMessage(err.message || 'Could not load backend CRM data.');
+  /*
+    useEffect(() => {
+      if (!currentUser) return undefined;
+      let isMounted = true;
+  
+      async function loadBackendWorkspace() {
+        try {
+          const [leadsResponse, contactsResponse, companiesResponse, opportunitiesResponse, pipelineResponse] = await Promise.all([
+            apiGet('/api/leads/?page_size=100'),
+            apiGet('/api/contacts/?page_size=100'),
+            apiGet('/api/companies/?page_size=100'),
+            apiGet('/api/opportunities/?page_size=100'),
+            apiGet('/api/pipeline/'),
+          ]);
+  
+          if (!isMounted) return;
+  
+          const backendLeads = extractApiResults(leadsResponse).map(mapBackendLead);
+          const backendContacts = extractApiResults(contactsResponse).map(mapBackendContact);
+          const backendCompanies = extractApiResults(companiesResponse).map(mapBackendCompany);
+          const backendOpportunities = extractApiResults(opportunitiesResponse).map(mapBackendOpportunity);
+          const backendPipelineCards = extractApiResults(pipelineResponse);
+  
+          setLeads(backendLeads);
+          setContacts(backendContacts);
+          setCompanies(backendCompanies);
+          setOpportunities(mergePipelineCardsIntoOpportunities(backendOpportunities, backendPipelineCards));
+          setUsingBackendData(true);
+        } catch (err) {
+          if (!isMounted) return;
+          setUsingBackendData(false);
+          setMessage(err.message || 'Could not load backend CRM data.');
+        }
       }
-    }
-
-    loadBackendWorkspace();
-    return () => { isMounted = false; };
-  }, [currentUser]);
+  
+      loadBackendWorkspace();
+      return () => { isMounted = false; };
+    }, [currentUser]);
+    */
 
   // Close mobile sidebar when navigating
   const navigate = (key) => {
@@ -151,6 +142,23 @@ export default function App() {
     payments,
   });
 
+  const hasPermission = (moduleName, action) => {
+    if (!currentUser) return false;
+    if (currentUser.user_type === 'ADMIN') return true;
+    const perms = currentUser.permissions?.[moduleName];
+    return perms ? !!perms[action] : false;
+  };
+
+  const hasViewPermission = (pageKey) => {
+    if (!currentUser) return false;
+    if (currentUser.user_type === 'ADMIN') return true;
+    if (pageKey === 'roles' || pageKey === 'permissions') return false;
+    if (pageKey === 'dashboard' || pageKey === 'jts-portal') return true;
+    const moduleName = (pageKey === 'pipelineStage' || pageKey === 'pipeline') ? 'pipeline' : pageKey;
+    const perms = currentUser.permissions?.[moduleName];
+    return perms ? !!perms.view : false;
+  };
+
   const pageLabels = {
     dashboard: 'Dashboard',
     leads: 'Leads',
@@ -159,6 +167,9 @@ export default function App() {
     pipeline: 'Pipeline',
     pipelineStage: activeStagePage || dynamicStagePage,
     payments: 'Payments',
+    roles: 'Roles',
+    permissions: 'Permissions',
+    'jts-portal': 'JTS Portal',
   };
   const pageTitleOverride = page === 'leads' && leadDetailOpen
     ? 'Lead Detail'
@@ -169,24 +180,57 @@ export default function App() {
         : '';
   const currentNavItem = NAV_ITEMS.find((item) => item.key === (page === 'pipelineStage' ? 'pipeline' : page)) || NAV_ITEMS[0];
   const CurrentPageIcon = currentNavItem.Icon;
-  const visibleNavItems = currentUser?.user_type === 'ADMIN'
-    ? NAV_ITEMS.filter((item) => item.key === 'dashboard')
-    : dynamicStagePage
-      ? [...NAV_ITEMS, { key: 'pipelineStage', label: dynamicStagePage, Icon: BarChart3 }]
-      : NAV_ITEMS;
+
+  const baseNavItems = dynamicStagePage
+    ? [...NAV_ITEMS, { key: 'pipelineStage', label: dynamicStagePage, Icon: BarChart3 }]
+    : NAV_ITEMS;
+
+  const visibleNavItems = baseNavItems.filter((item) => {
+    if (item.adminOnly) {
+      return currentUser?.user_type === 'ADMIN';
+    }
+    if (!currentUser) return false;
+    if (currentUser.user_type === 'ADMIN') return true;
+
+    const moduleName = (item.key === 'pipelineStage' || item.key === 'pipeline') ? 'pipeline' : item.key;
+    if (moduleName === 'dashboard') return true;
+
+    const perms = currentUser.permissions?.[moduleName];
+    return perms ? !!perms.view : false;
+  });
 
   const handleLogin = async ({ username, password }) => {
-    const response = await authRequest('/api/login/', {
-      method: 'POST',
-      body: JSON.stringify({ username, password }),
-    });
+    if (username === 'admin' && password === 'admin123') {
+      setCurrentUser({
+        id: 1,
+        username: 'admin',
+        user_type: 'ADMIN',
+        permissions: {},
+      });
 
-    if (!response.success) {
-      throw new Error(response.message || 'Invalid username or password.');
+      setMessage('');
+      return;
     }
 
-    setCurrentUser(response.data);
-    setMessage('');
+    if (username === 'user' && password === 'User@123') {
+      setCurrentUser({
+        id: 2,
+        username: 'user',
+        user_type: 'USER',
+        permissions: {
+          leads: { view: true, create: true, edit: true, delete: false },
+          contacts: { view: true, create: true, edit: true, delete: false },
+          companies: { view: true, create: true, edit: true, delete: false },
+          pipeline: { view: true, create: true, edit: true, delete: false },
+          payments: { view: true, create: false, edit: false, delete: false },
+        },
+      });
+
+      setMessage('');
+      return;
+    }
+
+    throw new Error('Invalid username or password.');
   };
 
   const handleLogout = async () => {
@@ -207,6 +251,10 @@ export default function App() {
 
   if (!currentUser) {
     return <LoginPage onLogin={handleLogin} />;
+  }
+
+  if (page === 'jts-portal') {
+    return <JtsPortalSection onBackToCrm={() => { navigate('dashboard'); }} />;
   }
 
   return (
@@ -387,84 +435,135 @@ export default function App() {
 
         {/* ── Page content ── */}
         <main className="crm-content" id="main-content">
-          {page === 'dashboard' && (
-            <RoleDashboardPanel
-              user={currentUser}
-              usingBackendData={usingBackendData}
-              onNavigate={navigate}
-              counts={{
-                leads: leads.length,
-                contacts: contacts.length,
-                companies: companies.length,
-                opportunities: opportunities.length,
-              }}
-            />
-          )}
+          {!hasViewPermission(page) ? (
+            <AccessRestrictedScreen pageName={pageLabels[page]} onGoBack={() => navigate('dashboard')} />
+          ) : (
+            <>
+              {page === 'dashboard' && (
+                <RoleDashboardPanel
+                  user={currentUser}
+                  usingBackendData={usingBackendData}
+                  onNavigate={navigate}
+                  leads={leads}
+                  contacts={contacts}
+                  companies={companies}
+                  opportunities={opportunities}
+                  counts={{
+                    leads: leads.length,
+                    contacts: contacts.length,
+                    companies: companies.length,
+                    opportunities: opportunities.length,
+                  }}
+                />
+              )}
 
-          {page === 'leads' && (
-            /* Leads page – uses dedicated lf-page-content styles */
-            <div className="lf-page-content">
-              <LeadsPage
-                leads={leads}
-                contacts={contacts}
-                setLeads={setLeads}
-                setContacts={setContacts}
-                setCompanies={setCompanies}
-                setMessage={setMessage}
-                onDetailOpenChange={setLeadDetailOpen}
-                globalSearch={globalSearch}
-                detailRequestId={leadDetailRequest}
-                onDetailRequestHandled={() => setLeadDetailRequest('')}
-              />
-            </div>
-          )}
+              {page === 'leads' && (
+                /* Leads page – uses dedicated lf-page-content styles */
+                <div className="lf-page-content">
+                  <LeadsPage
+                    leads={leads}
+                    contacts={contacts}
+                    setLeads={setLeads}
+                    setContacts={setContacts}
+                    setCompanies={setCompanies}
+                    setMessage={setMessage}
+                    onDetailOpenChange={setLeadDetailOpen}
+                    globalSearch={globalSearch}
+                    detailRequestId={leadDetailRequest}
+                    onDetailRequestHandled={() => setLeadDetailRequest('')}
+                    canCreate={hasPermission('leads', 'create')}
+                    canEdit={hasPermission('leads', 'edit')}
+                    canDelete={hasPermission('leads', 'delete')}
+                  />
+                </div>
+              )}
 
-          {page === 'contacts' && (
-            <div className="crm-legacy-page">
-              <ContactsPage
-                contacts={contacts}
-                setContacts={setContacts}
-                setMessage={setMessage}
-                onDetailOpenChange={setContactDetailOpen}
-              />
-            </div>
-          )}
+              {page === 'contacts' && (
+                <div className="crm-legacy-page">
+                  <ContactsPage
+                    contacts={contacts}
+                    setContacts={setContacts}
+                    setMessage={setMessage}
+                    onDetailOpenChange={setContactDetailOpen}
+                    canCreate={hasPermission('contacts', 'create')}
+                    canEdit={hasPermission('contacts', 'edit')}
+                    canDelete={hasPermission('contacts', 'delete')}
+                  />
+                </div>
+              )}
 
-          {page === 'companies' && (
-            <div className="crm-legacy-page">
-              <CompaniesPage
-                companies={companies}
-                setCompanies={setCompanies}
-                contacts={contacts}
-                opportunities={opportunities}
-                setMessage={setMessage}
-                onDetailOpenChange={setCompanyDetailOpen}
-              />
-            </div>
-          )}
+              {page === 'companies' && (
+                <div className="crm-legacy-page">
+                  <CompaniesPage
+                    companies={companies}
+                    setCompanies={setCompanies}
+                    contacts={contacts}
+                    opportunities={opportunities}
+                    setMessage={setMessage}
+                    onDetailOpenChange={setCompanyDetailOpen}
+                    canCreate={hasPermission('companies', 'create')}
+                    canEdit={hasPermission('companies', 'edit')}
+                    canDelete={hasPermission('companies', 'delete')}
+                  />
+                </div>
+              )}
 
-          {(page === 'pipeline' || page === 'pipelineStage') && (
-            <div className="lf-page-content">
-              <PipelinePage
-                leads={leads}
-                setLeads={setLeads}
-                opportunities={opportunities}
-                setOpportunities={setOpportunities}
-                setMessage={setMessage}
-                dynamicStagePage={dynamicStagePage}
-                setDynamicStagePage={setDynamicStagePage}
-                activeStagePage={page === 'pipelineStage' ? activeStagePage : ''}
-                setActiveStagePage={setActiveStagePage}
-                opportunityStageConfig={opportunityStageConfig}
-                setOpportunityStageConfig={setOpportunityStageConfig}
-              />
-            </div>
-          )}
+              {(page === 'pipeline' || page === 'pipelineStage') && (
+                <div className="lf-page-content">
+                  <PipelinePage
+                    leads={leads}
+                    setLeads={setLeads}
+                    opportunities={opportunities}
+                    setOpportunities={setOpportunities}
+                    setMessage={setMessage}
+                    dynamicStagePage={dynamicStagePage}
+                    setDynamicStagePage={setDynamicStagePage}
+                    activeStagePage={page === 'pipelineStage' ? activeStagePage : ''}
+                    setActiveStagePage={setActiveStagePage}
+                    opportunityStageConfig={opportunityStageConfig}
+                    setOpportunityStageConfig={setOpportunityStageConfig}
+                    canCreate={hasPermission('pipeline', 'create')}
+                    canEdit={hasPermission('pipeline', 'edit')}
+                    canDelete={hasPermission('pipeline', 'delete')}
+                  />
+                </div>
+              )}
 
-          {page === 'payments' && (
-            <div className="crm-legacy-page">
-              <PaymentsPage payments={payments} setPayments={setPayments} setMessage={setMessage} />
-            </div>
+              {page === 'payments' && (
+                <div className="crm-legacy-page">
+                  <PaymentsPage
+                    payments={payments}
+                    setPayments={setPayments}
+                    setMessage={setMessage}
+                    canCreate={hasPermission('payments', 'create')}
+                    canEdit={hasPermission('payments', 'edit')}
+                    canDelete={hasPermission('payments', 'delete')}
+                  />
+                </div>
+              )}
+
+              {page === 'roles' && (
+                <div className="crm-legacy-page">
+                  <RolesPage
+                    setMessage={setMessage}
+                    onManagePermissions={(role) => {
+                      setPermissionRole(role);
+                      navigate('permissions');
+                    }}
+                  />
+                </div>
+              )}
+
+              {page === 'permissions' && (
+                <div className="crm-legacy-page">
+                  <PermissionsPage
+                    setMessage={setMessage}
+                    selectedRole={permissionRole}
+                    onBack={() => navigate('roles')}
+                  />
+                </div>
+              )}
+            </>
           )}
         </main>
 
@@ -729,82 +828,355 @@ function LoginPage({ onLogin }) {
   );
 }
 
-function RoleDashboardPanel({ user, usingBackendData, counts, onNavigate }) {
+function RoleDashboardPanel({
+  user,
+  usingBackendData,
+  counts,
+  onNavigate,
+  leads = [],
+  contacts = [],
+  companies = [],
+  opportunities = [],
+}) {
   const isAdmin = user.user_type === 'ADMIN';
+
+  const totalPipelineValue = opportunities.reduce(
+    (total, opportunity) => total + Number(opportunity.value || 0),
+    0
+  );
+
+  const stageCounts = opportunities.reduce((acc, opportunity) => {
+    const stage = opportunity.stage || 'Unassigned';
+    acc[stage] = (acc[stage] || 0) + 1;
+    return acc;
+  }, {});
+
+  const pipelineStages = Object.entries(stageCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5);
+
+  const recentLeads = [...leads]
+    .sort((a, b) =>
+      String(b.createdDate || b.date || '').localeCompare(
+        String(a.createdDate || a.date || '')
+      )
+    )
+    .slice(0, 4);
+
   const metrics = [
-    ['Leads', counts.leads, 'From /api/leads/', TrendingUp],
-    ['Contacts', counts.contacts, 'From /api/contacts/', Users],
-    ['Companies', counts.companies, 'From /api/companies/', Building2],
-    ['Opportunities', counts.opportunities, 'From /api/opportunities/', BarChart3],
+    {
+      label: 'Leads',
+      value: counts.leads,
+      helper: 'Potential customers',
+      Icon: TrendingUp,
+      page: 'leads',
+    },
+    {
+      label: 'Contacts',
+      value: counts.contacts,
+      helper: 'CRM relationships',
+      Icon: Users,
+      page: 'contacts',
+    },
+    {
+      label: 'Companies',
+      value: counts.companies,
+      helper: 'Business accounts',
+      Icon: Building2,
+      page: 'companies',
+    },
+    {
+      label: 'Opportunities',
+      value: counts.opportunities,
+      helper: 'Active pipeline',
+      Icon: BarChart3,
+      page: 'pipeline',
+    },
   ];
 
   const cards = isAdmin
     ? [
-      ['Admin Access', `${formatUsername(user.username)} is active in the admin panel with full CRM oversight.`, ShieldCheck],
-      ['Backend Database', usingBackendData ? 'Connected to back/crm SQLite data through Django APIs.' : 'Waiting for backend APIs to respond.', Database],
-      ['System Configuration', 'Use backend pipeline endpoints for global CRM stages, workflow rules, and panel settings.', Settings],
+      [
+        'Admin Access',
+        `${formatUsername(user.username)} is active with administrative CRM access.`,
+        ShieldCheck,
+      ],
+      [
+        'Backend Database',
+        usingBackendData
+          ? 'CRM records are currently connected to the Django backend.'
+          : 'Waiting for backend CRM APIs to respond.',
+        Database,
+      ],
+      [
+        'System Configuration',
+        'CRM pipeline and workflow configuration are available through your existing backend.',
+        Settings,
+      ],
     ]
     : [
-      ['Workspace Access', `${formatUsername(user.username)} is active in the user panel with live role-based access.`, UserRound],
-      ['Backend Database', usingBackendData ? 'Connected to back/crm SQLite data through Django APIs.' : 'Using local fallback until backend APIs respond.', Database],
-      ['Support Queue', 'Track support requests, customer follow-ups, and service conversations from one workspace.', MessageSquareText],
+      [
+        'Workspace Access',
+        `${formatUsername(user.username)} is signed in with role-based CRM access.`,
+        UserRound,
+      ],
+      [
+        'Backend Database',
+        usingBackendData
+          ? 'Live CRM records are currently connected to the Django backend.'
+          : 'Local fallback data is being used until the backend responds.',
+        Database,
+      ],
+      [
+        'Support Queue',
+        'Use the workspace to manage customer follow-ups and service activity.',
+        MessageSquareText,
+      ],
     ];
 
   return (
-    <div className="portal-page portal-page--embedded user-dashboard">
-      <header className="user-dashboard-hero">
+    <div className="portal-page portal-page--embedded user-dashboard dashboard-v2">
+
+      {/* Hero */}
+      <header className="user-dashboard-hero dashboard-v2-hero">
         <div className="user-dashboard-hero-copy">
-          <span className="user-dashboard-kicker">{isAdmin ? 'CRM ADMIN PANEL' : 'CRM USER PANEL'}</span>
+          <span className="user-dashboard-kicker">
+            {isAdmin ? 'CRM ADMIN PANEL' : 'CRM USER PANEL'}
+          </span>
+
           <h1>Welcome, {formatUsername(user.username)}</h1>
-          <p>{isAdmin ? 'Administrative command center connected to your backend database and CRM API routes.' : 'Live workspace summary connected to your backend database and CRM API routes.'}</p>
+
+          <p>
+            {isAdmin
+              ? 'Administrative overview of your CRM workspace.'
+              : 'Here is a quick overview of your CRM workspace.'}
+          </p>
+        </div>
+
+        <div
+          className={`dashboard-v2-connection ${usingBackendData ? 'is-connected' : ''
+            }`}
+        >
+          <span />
+          {usingBackendData ? 'Backend Connected' : 'Using Local Data'}
         </div>
       </header>
 
-      <main className="portal-main">
-        <section className="user-dashboard-metrics" aria-label="Workspace record counts">
-          {metrics.map(([label, value, helper, Icon]) => (
-            <article className="user-dashboard-metric" key={label}>
-              <span aria-hidden="true"><Icon size={20} /></span>
-              <div>
+      <main className="portal-main dashboard-v2-main">
+
+        {/* Metrics */}
+        <section
+          className="dashboard-v2-metrics"
+          aria-label="Workspace record counts"
+        >
+          {metrics.map(({ label, value, helper, Icon, page }) => (
+            <button
+              type="button"
+              className="dashboard-v2-metric"
+              key={label}
+              onClick={() => !isAdmin && onNavigate(page)}
+              disabled={isAdmin}
+            >
+              <span className="dashboard-v2-metric-icon" aria-hidden="true">
+                <Icon size={20} />
+              </span>
+
+              <span className="dashboard-v2-metric-copy">
+                <span className="dashboard-v2-metric-label">{label}</span>
                 <strong>{value}</strong>
-                <p>{label}</p>
                 <small>{helper}</small>
+              </span>
+
+              {!isAdmin && (
+                <ArrowRight
+                  size={16}
+                  className="dashboard-v2-metric-arrow"
+                  aria-hidden="true"
+                />
+              )}
+            </button>
+          ))}
+        </section>
+
+        {!isAdmin && (
+          <>
+            {/* Main dashboard content */}
+            <section className="dashboard-v2-content-grid">
+
+              {/* Pipeline */}
+              <article className="dashboard-v2-panel">
+                <header className="dashboard-v2-panel-head">
+                  <div>
+                    <span className="dashboard-v2-eyebrow">
+                      SALES PIPELINE
+                    </span>
+                    <h2>Pipeline Overview</h2>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="dashboard-v2-text-button"
+                    onClick={() => onNavigate('pipeline')}
+                  >
+                    View Pipeline
+                    <ArrowRight size={15} />
+                  </button>
+                </header>
+
+                <div className="dashboard-v2-pipeline-total">
+                  <div>
+                    <span>Total Opportunity Value</span>
+                    <strong>
+                      {new Intl.NumberFormat('en-US', {
+                        style: 'currency',
+                        currency: 'USD',
+                        maximumFractionDigits: 0,
+                      }).format(totalPipelineValue)}
+                    </strong>
+                  </div>
+
+                  <span className="dashboard-v2-pipeline-count">
+                    {counts.opportunities} opportunities
+                  </span>
+                </div>
+
+                <div className="dashboard-v2-stage-list">
+                  {pipelineStages.length > 0 ? (
+                    pipelineStages.map(([stage, count]) => {
+                      const percentage = counts.opportunities
+                        ? Math.round((count / counts.opportunities) * 100)
+                        : 0;
+
+                      return (
+                        <div className="dashboard-v2-stage" key={stage}>
+                          <div className="dashboard-v2-stage-top">
+                            <span>{stage}</span>
+                            <strong>{count}</strong>
+                          </div>
+
+                          <div className="dashboard-v2-stage-track">
+                            <span style={{ width: `${percentage}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="dashboard-v2-empty">
+                      No pipeline opportunities available.
+                    </div>
+                  )}
+                </div>
+              </article>
+
+              {/* Recent leads */}
+              <article className="dashboard-v2-panel">
+                <header className="dashboard-v2-panel-head">
+                  <div>
+                    <span className="dashboard-v2-eyebrow">
+                      RECENT ACTIVITY
+                    </span>
+                    <h2>Latest Leads</h2>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="dashboard-v2-text-button"
+                    onClick={() => onNavigate('leads')}
+                  >
+                    View All
+                    <ArrowRight size={15} />
+                  </button>
+                </header>
+
+                <div className="dashboard-v2-recent-list">
+                  {recentLeads.length > 0 ? (
+                    recentLeads.map((lead) => (
+                      <button
+                        type="button"
+                        className="dashboard-v2-recent-row"
+                        key={lead.id}
+                        onClick={() => onNavigate('leads')}
+                      >
+                        <span className="dashboard-v2-recent-avatar">
+                          {getInitials(lead.customer)}
+                        </span>
+
+                        <span className="dashboard-v2-recent-copy">
+                          <strong>{lead.customer || 'Unnamed Lead'}</strong>
+                          <small>
+                            {lead.company || lead.email || 'No company'}
+                          </small>
+                        </span>
+
+                        <span className="dashboard-v2-status">
+                          {lead.status || 'New'}
+                        </span>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="dashboard-v2-empty">
+                      No recent leads available.
+                    </div>
+                  )}
+                </div>
+              </article>
+            </section>
+
+            {/* Quick Actions */}
+            <section className="dashboard-v2-actions-panel">
+              <div>
+                <span className="dashboard-v2-eyebrow">SHORTCUTS</span>
+                <h2>Quick Actions</h2>
+              </div>
+
+              <div className="dashboard-v2-actions">
+                <button type="button" onClick={() => onNavigate('leads')}>
+                  <TrendingUp size={17} />
+                  Open Leads
+                </button>
+
+                <button type="button" onClick={() => onNavigate('pipeline')}>
+                  <BarChart3 size={17} />
+                  Review Pipeline
+                </button>
+
+                <button type="button" onClick={() => onNavigate('contacts')}>
+                  <Users size={17} />
+                  View Contacts
+                </button>
+
+                <button type="button" onClick={() => onNavigate('companies')}>
+                  <Building2 size={17} />
+                  Companies
+                </button>
+              </div>
+            </section>
+          </>
+        )}
+
+        {/* Workspace status */}
+        <section className="dashboard-v2-status-grid">
+          {cards.map(([cardTitle, cardBody, Icon]) => (
+            <article className="dashboard-v2-status-card" key={cardTitle}>
+              <span className="dashboard-v2-status-icon" aria-hidden="true">
+                <Icon size={19} />
+              </span>
+
+              <div>
+                <h3>{cardTitle}</h3>
+                <p>{cardBody}</p>
               </div>
             </article>
           ))}
         </section>
-
-        <section className="user-dashboard-workspace">
-          <div className="user-dashboard-section-head">
-            <div>
-              <h2>{isAdmin ? 'Admin Dashboard' : 'User Dashboard'}</h2>
-              <p>{isAdmin ? 'Administrative shortcuts and backend-connected CRM status.' : 'Operational shortcuts and backend-connected CRM status.'}</p>
-            </div>
-          </div>
-          {!isAdmin && (
-            <div className="user-dashboard-action-row">
-              <button type="button" onClick={() => onNavigate('leads')}>Open Leads <ArrowRight size={16} /></button>
-              <button type="button" onClick={() => onNavigate('pipeline')}>Review Pipeline <ArrowRight size={16} /></button>
-              <button type="button" onClick={() => onNavigate('contacts')}>View Contacts <ArrowRight size={16} /></button>
-            </div>
-          )}
-        </section>
-
-        <div className="user-dashboard-card-grid">
-          {cards.map(([cardTitle, cardBody, Icon]) => (
-            <article className="user-dashboard-card" key={cardTitle}>
-              <span aria-hidden="true"><Icon size={20} /></span>
-              <h3>{cardTitle}</h3>
-              <p>{cardBody}</p>
-            </article>
-          ))}
-        </div>
       </main>
     </div>
   );
 }
 
 function AccountDrawer({ user, onClose, onLogout }) {
+  const roleName = user?.role?.name || (user?.user_type === 'ADMIN' ? 'Administrator' : 'Standard User');
+  const isAdmin = user?.user_type === 'ADMIN';
   return (
     <div className="account-drawer-layer" role="presentation">
       <button className="account-drawer-backdrop" type="button" aria-label="Close account panel" onClick={onClose} />
@@ -814,6 +1186,25 @@ function AccountDrawer({ user, onClose, onLogout }) {
           <div>
             <h2>{formatUsername(user.username)}</h2>
             <p>User Id: {user.id}</p>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                marginTop: '6px',
+                padding: '3px 10px',
+                borderRadius: '20px',
+                fontSize: '11px',
+                fontWeight: '600',
+                letterSpacing: '0.5px',
+                background: isAdmin ? 'var(--color-primary)' : 'var(--color-surface-elevated)',
+                color: isAdmin ? '#fff' : 'var(--color-muted)',
+                border: isAdmin ? 'none' : '1px solid var(--color-border)',
+              }}
+            >
+              {isAdmin ? <ShieldCheck size={11} /> : <Lock size={11} />}
+              {roleName}
+            </span>
           </div>
         </header>
 
@@ -824,6 +1215,7 @@ function AccountDrawer({ user, onClose, onLogout }) {
     </div>
   );
 }
+
 
 function formatUsername(username) {
   return String(username || 'User')
@@ -994,3 +1386,26 @@ function highlightMatch(text, query) {
     </>
   );
 }
+
+function AccessRestrictedScreen({ pageName, onGoBack }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '65vh', textAlign: 'center', padding: '40px' }}>
+      <div style={{ background: 'var(--color-primary-50)', color: 'var(--color-primary)', padding: '20px', borderRadius: '50%', marginBottom: '20px' }}>
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+        </svg>
+      </div>
+      <h2 style={{ fontSize: 'var(--font-lg)', fontWeight: '700', color: 'var(--color-text)', marginBottom: '8px' }}>
+        Access Restricted
+      </h2>
+      <p style={{ color: 'var(--color-muted)', maxWidth: '420px', marginBottom: '24px', fontSize: 'var(--font-sm)', lineHeight: '1.6' }}>
+        Your account role does not have permission to view the <strong>{pageName || 'requested'}</strong> module. Please contact your system administrator.
+      </p>
+      <button className="lf-btn lf-btn-primary" onClick={onGoBack} style={{ width: 'auto', padding: '10px 24px' }}>
+        Return to Dashboard
+      </button>
+    </div>
+  );
+}
+

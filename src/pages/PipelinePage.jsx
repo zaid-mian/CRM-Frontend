@@ -46,7 +46,7 @@ const pipelineDummyLeads = [
 ];
 
 
-export default function PipelinePage({ leads, setLeads, opportunities, setOpportunities, setMessage, dynamicStagePage, setDynamicStagePage, activeStagePage, setActiveStagePage, opportunityStageConfig, setOpportunityStageConfig }) {
+export default function PipelinePage({ leads, setLeads, opportunities, setOpportunities, setMessage, dynamicStagePage, setDynamicStagePage, activeStagePage, setActiveStagePage, opportunityStageConfig, setOpportunityStageConfig, canCreate = true, canEdit = true, canDelete = true }) {
   const [stageList, setStageList] = useState(makeStandardStageList);
   const [dummyPipelineLeads, setDummyPipelineLeads] = useState(pipelineDummyLeads);
   const [search, setSearch] = useState('');

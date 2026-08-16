@@ -67,7 +67,7 @@ const companyFilters = [
   { key: 'dateRange', label: 'Date range', type: 'dateRange', options: companyDateRangeOptions, defaultValue: 'All' },
 ];
 
-export default function CompaniesPage({ companies, setCompanies, setMessage, onDetailOpenChange, summaryItems, addButtonLabel = 'New Company', addButtonIcon, filterConfig = companyFilters, panelAfterContent = null, hideTable = false, onAddButtonClick = null, actionExtraContent = null }) {
+export default function CompaniesPage({ companies, setCompanies, setMessage, onDetailOpenChange, summaryItems, addButtonLabel = 'New Company', addButtonIcon, filterConfig = companyFilters, panelAfterContent = null, hideTable = false, onAddButtonClick = null, actionExtraContent = null, canCreate = true, canEdit = true, canDelete = true }) {
   const [companiesAsContacts, setCompaniesAsContacts] = useState(companyRows);
   const companyData = companies?.length ? companies.map((company) => ({
     ...company,
@@ -116,13 +116,16 @@ export default function CompaniesPage({ companies, setCompanies, setMessage, onD
       hideTable={hideTable}
       onAddButtonClick={onAddButtonClick}
       actionExtraContent={actionExtraContent}
-      customDetailRenderer={(props) => <CompanyDetailPage {...props} />}
+      customDetailRenderer={(props) => <CompanyDetailPage {...props} canEdit={canEdit} />}
       filterTopContent={<CompanySummaryStrip items={summaryItems} />}
+      canCreate={canCreate}
+      canEdit={canEdit}
+      canDelete={canDelete}
     />
   );
 }
 
-function CompanyDetailPage({ record, onBack, onEdit }) {
+function CompanyDetailPage({ record, onBack, onEdit, canEdit = true }) {
   return (
     <div className="lf-page leads-page company-record-page">
       <section className="payment-record-detail company-record-detail" aria-label="Company details">
@@ -132,7 +135,7 @@ function CompanyDetailPage({ record, onBack, onEdit }) {
             <h2>{record.name || record.company || 'Company Detail'}</h2>
             <p>{record.id || '-'} / {record.industry || '-'}</p>
           </div>
-          <button className="payment-record-edit" type="button" onClick={onEdit}>Edit</button>
+          {canEdit && <button className="payment-record-edit" type="button" onClick={onEdit}>Edit</button>}
         </header>
 
         <section className="payment-record-summary" aria-label="Company summary">

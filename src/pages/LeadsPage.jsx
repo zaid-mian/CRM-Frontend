@@ -68,7 +68,7 @@ const blankLeadForm = {
   notes: '',
 };
 
-export default function LeadsPage({ setLeads, setContacts, setCompanies, setMessage, onDetailOpenChange, globalSearch = '', detailRequestId = '', onDetailRequestHandled }) {
+export default function LeadsPage({ setLeads, setContacts, setCompanies, setMessage, onDetailOpenChange, globalSearch = '', detailRequestId = '', onDetailRequestHandled, canCreate = true, canEdit = true, canDelete = true }) {
   const [leads, setLocalLeads] = useState(mockLeads);
   const [filters, setFilters] = useState({ status: 'All Statuses', owner: 'All Owners', priority: 'All Priorities', source: 'All Sources', dateRange: 'Any Time' });
   const [dateRange, setDateRange] = useState({ from: '', to: '' });
@@ -391,68 +391,70 @@ export default function LeadsPage({ setLeads, setContacts, setCompanies, setMess
       )}
 
       {!addOpen && !detailsLead && (
-      <section className="lf-table-card sales-table-card">
-        <PagePanel>
-          <LeadSummaryStrip summary={leadSummary} />
-          <PageFilters
-            filters={filters}
-            dateRange={dateRange}
-            activeFilterCount={activeFilterCount}
-            updateFilter={updateFilter}
-            setDateRange={setDateRange}
-            resetFilters={resetFilters}
-          />
-          <PageHeader
-            onAdd={openAdd}
-          />
-        </PagePanel>
-        <div className="lf-table-scroll">
-          <table className="lf-leads-table">
-            <thead>
-              <tr>
-                <th className="lf-sr-col">#</th>
-                {displayColumns.map((column) => (
-                  <th key={column.key}>
-                    {column.sortable ? (
-                      <button className="lf-sort-btn" onClick={() => handleSort(column.key)}>
-                        {column.label}<span>{sortBy === column.key ? (sortDirection === 'asc' ? '↑' : '↓') : '↕'}</span>
-                      </button>
-                    ) : column.label}
-                  </th>
-                ))}
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pageRows.map((lead, rowIndex) => {
-                return (
-                <tr key={lead.id} className={selectedIds.includes(lead.id) ? 'selected' : ''} onClick={() => setDetailsLead(lead)}>
-                  <td className="lf-sr-col">{pageStart + rowIndex + 1}</td>
+        <section className="lf-table-card sales-table-card">
+          <PagePanel>
+            <LeadSummaryStrip summary={leadSummary} />
+            <PageFilters
+              filters={filters}
+              dateRange={dateRange}
+              activeFilterCount={activeFilterCount}
+              updateFilter={updateFilter}
+              setDateRange={setDateRange}
+              resetFilters={resetFilters}
+            />
+            {canCreate && (
+              <PageHeader
+                onAdd={openAdd}
+              />
+            )}
+          </PagePanel>
+          <div className="lf-table-scroll">
+            <table className="lf-leads-table">
+              <thead>
+                <tr>
+                  <th className="lf-sr-col">#</th>
                   {displayColumns.map((column) => (
-                    <td key={column.key}>{renderLeadCell(lead, column.key, { onDetails: setDetailsLead, emailHidden: hasEmailHidden, query: globalSearch })}</td>
+                    <th key={column.key}>
+                      {column.sortable ? (
+                        <button className="lf-sort-btn" onClick={() => handleSort(column.key)}>
+                          {column.label}<span>{sortBy === column.key ? (sortDirection === 'asc' ? '↑' : '↓') : '↕'}</span>
+                        </button>
+                      ) : column.label}
+                    </th>
                   ))}
-                  <td className="lf-actions-cell">
-                    <div className="inline-row-actions" onClick={(event) => event.stopPropagation()}>
-                      <button type="button" className="inline-action inline-action--edit" aria-label={`Edit ${lead.customer}`} title="Edit" onClick={() => openEdit(lead)}><Edit3 size={15} /></button>
-                      <button type="button" className="inline-action inline-action--delete" aria-label={`Delete ${lead.customer}`} title="Delete" onClick={() => setDeletingLead(lead)}><Trash2 size={15} /></button>
-                    </div>
-                  </td>
+                  <th>Actions</th>
                 </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          {filteredLeads.length === 0 && (
-            <div className="lf-empty-state">
-              <h3>No leads found</h3>
-              <p>Try adjusting your search or filters, or create your first lead.</p>
-              <button onClick={resetFilters}>Clear Filters</button>
-              <button className="primary" onClick={openAdd}>Add New Lead</button>
-            </div>
-          )}
-        </div>
+              </thead>
+              <tbody>
+                {pageRows.map((lead, rowIndex) => {
+                  return (
+                    <tr key={lead.id} className={selectedIds.includes(lead.id) ? 'selected' : ''} onClick={() => setDetailsLead(lead)}>
+                      <td className="lf-sr-col">{pageStart + rowIndex + 1}</td>
+                      {displayColumns.map((column) => (
+                        <td key={column.key}>{renderLeadCell(lead, column.key, { onDetails: setDetailsLead, emailHidden: hasEmailHidden, query: globalSearch })}</td>
+                      ))}
+                      <td className="lf-actions-cell">
+                        <div className="inline-row-actions" onClick={(event) => event.stopPropagation()}>
+                          {canEdit && <button type="button" className="inline-action inline-action--edit" aria-label={`Edit ${lead.customer}`} title="Edit" onClick={() => openEdit(lead)}><Edit3 size={15} /></button>}
+                          {canDelete && <button type="button" className="inline-action inline-action--delete" aria-label={`Delete ${lead.customer}`} title="Delete" onClick={() => setDeletingLead(lead)}><Trash2 size={15} /></button>}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {filteredLeads.length === 0 && (
+              <div className="lf-empty-state">
+                <h3>No leads found</h3>
+                <p>Try adjusting your search or filters, or create your first lead.</p>
+                <button onClick={resetFilters}>Clear Filters</button>
+                {canCreate && <button className="primary" onClick={openAdd}>Add New Lead</button>}
+              </div>
+            )}
+          </div>
 
-      </section>
+        </section>
       )}
 
       {addOpen && <AddLeadModal form={form} setForm={setForm} errors={errors} saving={saving} editing={Boolean(editingLead)} onClose={closeForm} onDraft={() => submitLead('draft')} onSubmit={() => submitLead('final')} />}
@@ -473,6 +475,7 @@ export default function LeadsPage({ setLeads, setContacts, setCompanies, setMess
             showToast('Lead marked lost successfully');
           }}
           onToast={showToast}
+          canEdit={canEdit}
         />
       )}
 
@@ -758,7 +761,7 @@ function FormSelect({ label, value, options, onChange, className = '' }) {
   return <SearchableSelect className={`lf-field${className ? ` ${className}` : ''}`} label={label} value={value} options={options} onChange={onChange} showInlineLabel={false} />;
 }
 
-function LeadDetailsDrawer({ lead, onClose, onEdit, onConvert, onMarkLost, onToast }) {
+function LeadDetailsDrawer({ lead, onClose, onEdit, onConvert, onMarkLost, onToast, canEdit = true }) {
   const estimatedValue = Number(lead.estimatedValue || 0);
 
   return (
@@ -772,9 +775,9 @@ function LeadDetailsDrawer({ lead, onClose, onEdit, onConvert, onMarkLost, onToa
           <p>{lead.company || '-'} / {lead.jobTitle || lead.source || '-'}</p>
         </div>
         <div className="lead-record-actions">
-          <button type="button" className="payment-record-edit" onClick={onEdit}><Edit3 size={15} />Edit</button>
-          <button type="button" className="lead-record-convert" onClick={onConvert}><Check size={15} />Convert</button>
-          <button type="button" className="lead-record-lost" onClick={onMarkLost}><X size={15} />Mark Lost</button>
+          {canEdit && <button type="button" className="payment-record-edit" onClick={onEdit}><Edit3 size={15} />Edit</button>}
+          {canEdit && <button type="button" className="lead-record-convert" onClick={onConvert}><Check size={15} />Convert</button>}
+          {canEdit && <button type="button" className="lead-record-lost" onClick={onMarkLost}><X size={15} />Mark Lost</button>}
         </div>
       </header>
 
@@ -825,43 +828,43 @@ function LeadDetailsDrawer({ lead, onClose, onEdit, onConvert, onMarkLost, onToa
   return (
     <section className="lead-detail-page" aria-label="Lead details">
       <div className="lead-detail-page-card">
-      <div className="lead-detail-title">
-        <h2>Lead Detail</h2>
-      </div>
-      <div className="lf-drawer-head">
-        <div className="lf-drawer-person"><Avatar name={lead.customer} /><div><h2>{lead.customer}</h2><p>{lead.company} · {lead.jobTitle}</p></div></div>
-        <button type="button" className="button secondary lead-detail-back" aria-label="Back" title="Back" onClick={onClose}><ArrowLeft size={22} /></button>
-      </div>
-      <div className="lf-detail-grid">
-        <Detail label="Full Name" value={lead.customer} />
-        <Detail label="Email" value={lead.email} />
-        <Detail label="Phone" value={lead.phone} />
-        <Detail label="Status" value={<StatusBadge value={lead.status} />} />
-        <Detail label="Priority" value={<PriorityBadge value={lead.priority} />} />
-        <Detail label="Lead Source" value={lead.source} />
-        <Detail label="Assigned Owner" value={lead.owner} />
-      </div>
-      <section className="lead-detail-section-heading">
-        <h3>Company Information</h3>
-      </section>
-      <div className="lf-detail-grid">
-        <Detail label="Company Name" value={lead.company || '-'} />
-        <Detail label="Website" value={lead.jobTitle || '-'} />
-        <Detail label="Industry" value={lead.source || '-'} />
-        <Detail label="Employees" value={lead.expectedCloseDate || '-'} />
-        <Detail label="Annual Revenue" value={lead.estimatedValue ? `$${lead.estimatedValue.toLocaleString()}` : '-'} />
-        <Detail label="Estimated Value" value={`$${lead.estimatedValue.toLocaleString()}`} />
-        <Detail label="Created Date" value={formatDate(lead.createdDate)} />
-      </div>
-      <section className="lf-detail-section"><h3>Notes</h3><p>{lead.notes}</p></section>
-      <section className="lf-detail-section"><h3>Activity Timeline</h3><p>{lead.lastActivity}</p><p>Discovery email sent and next step logged.</p></section>
-      <section className="lf-detail-section"><h3>Upcoming Follow-up</h3><p>{lead.upcomingFollowUp}</p></section>
-      <section className="lf-detail-section"><h3>Related Tasks</h3><p>Prepare account map, confirm buying committee, and update close plan.</p></section>
-      <div className="lf-drawer-actions lf-drawer-actions--footer">
-        <button onClick={onEdit}><Edit3 size={15} />Edit</button>
-        <button className="primary" onClick={onConvert}><Check size={15} />Convert</button>
-        <button className="danger" onClick={onMarkLost}><X size={15} />Mark Lost</button>
-      </div>
+        <div className="lead-detail-title">
+          <h2>Lead Detail</h2>
+        </div>
+        <div className="lf-drawer-head">
+          <div className="lf-drawer-person"><Avatar name={lead.customer} /><div><h2>{lead.customer}</h2><p>{lead.company} · {lead.jobTitle}</p></div></div>
+          <button type="button" className="button secondary lead-detail-back" aria-label="Back" title="Back" onClick={onClose}><ArrowLeft size={22} /></button>
+        </div>
+        <div className="lf-detail-grid">
+          <Detail label="Full Name" value={lead.customer} />
+          <Detail label="Email" value={lead.email} />
+          <Detail label="Phone" value={lead.phone} />
+          <Detail label="Status" value={<StatusBadge value={lead.status} />} />
+          <Detail label="Priority" value={<PriorityBadge value={lead.priority} />} />
+          <Detail label="Lead Source" value={lead.source} />
+          <Detail label="Assigned Owner" value={lead.owner} />
+        </div>
+        <section className="lead-detail-section-heading">
+          <h3>Company Information</h3>
+        </section>
+        <div className="lf-detail-grid">
+          <Detail label="Company Name" value={lead.company || '-'} />
+          <Detail label="Website" value={lead.jobTitle || '-'} />
+          <Detail label="Industry" value={lead.source || '-'} />
+          <Detail label="Employees" value={lead.expectedCloseDate || '-'} />
+          <Detail label="Annual Revenue" value={lead.estimatedValue ? `$${lead.estimatedValue.toLocaleString()}` : '-'} />
+          <Detail label="Estimated Value" value={`$${lead.estimatedValue.toLocaleString()}`} />
+          <Detail label="Created Date" value={formatDate(lead.createdDate)} />
+        </div>
+        <section className="lf-detail-section"><h3>Notes</h3><p>{lead.notes}</p></section>
+        <section className="lf-detail-section"><h3>Activity Timeline</h3><p>{lead.lastActivity}</p><p>Discovery email sent and next step logged.</p></section>
+        <section className="lf-detail-section"><h3>Upcoming Follow-up</h3><p>{lead.upcomingFollowUp}</p></section>
+        <section className="lf-detail-section"><h3>Related Tasks</h3><p>Prepare account map, confirm buying committee, and update close plan.</p></section>
+        <div className="lf-drawer-actions lf-drawer-actions--footer">
+          {canEdit && <button onClick={onEdit}><Edit3 size={15} />Edit</button>}
+          {canEdit && <button className="primary" onClick={onConvert}><Check size={15} />Convert</button>}
+          {canEdit && <button className="danger" onClick={onMarkLost}><X size={15} />Mark Lost</button>}
+        </div>
       </div>
     </section>
   );

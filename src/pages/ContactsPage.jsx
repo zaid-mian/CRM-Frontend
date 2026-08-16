@@ -97,6 +97,9 @@ export default function ContactsPage({
   actionExtraContent = null,
   customDetailRenderer = null,
   useFallbackRows = true,
+  canCreate = true,
+  canEdit = true,
+  canDelete = true,
 }) {
   const [filters, setFilters] = useState(() => buildDefaultFilters(filterConfig));
   const [dateRanges, setDateRanges] = useState({});
@@ -279,11 +282,12 @@ export default function ContactsPage({
     return (
       <>
         <ContactRecordDetailPage
-          contact={selectedContact}
-          onBack={closeContactDetails}
-          onEdit={() => openEditContact(selectedContact)}
-          onDelete={() => requestDeleteContact(selectedContact)}
-        />
+  contact={selectedContact}
+  onBack={closeContactDetails}
+  onEdit={() => openEditContact(selectedContact)}
+  onDelete={() => requestDeleteContact(selectedContact)}
+  canEdit={canEdit}
+/>
         {deletingContact && (
           <ConfirmDeleteContact
             contact={deletingContact}
@@ -320,7 +324,7 @@ export default function ContactsPage({
           <header className="page-panel-header sales-page-header" aria-label="Contact actions">
             <div className="lf-page-actions lf-page-actions--hero">
               {actionExtraContent}
-              <button className="lf-btn lf-btn-primary" onClick={onAddButtonClick || openAddContact}><AddButtonIcon size={17} />{addButtonLabel}</button>
+              {canCreate && <button className="lf-btn lf-btn-primary" onClick={onAddButtonClick || openAddContact}><AddButtonIcon size={17} />{addButtonLabel}</button>}
             </div>
           </header>
         </section>
@@ -350,8 +354,8 @@ export default function ContactsPage({
                     ))}
                     <td className="lf-actions-cell">
                       <div className="inline-row-actions">
-                        <button type="button" className="inline-action inline-action--edit" aria-label={`Edit ${getContactDisplayName(contact)}`} title="Edit" onClick={(event) => { event.stopPropagation(); openEditContact(contact); }}><Edit3 size={15} /></button>
-                        <button type="button" className="inline-action inline-action--delete" aria-label={`Delete ${getContactDisplayName(contact)}`} title="Delete" onClick={(event) => { event.stopPropagation(); requestDeleteContact(contact); }}><Trash2 size={15} /></button>
+                        {canEdit && <button type="button" className="inline-action inline-action--edit" aria-label={`Edit ${getContactDisplayName(contact)}`} title="Edit" onClick={(event) => { event.stopPropagation(); openEditContact(contact); }}><Edit3 size={15} /></button>}
+                        {canDelete && <button type="button" className="inline-action inline-action--delete" aria-label={`Delete ${getContactDisplayName(contact)}`} title="Delete" onClick={(event) => { event.stopPropagation(); requestDeleteContact(contact); }}><Trash2 size={15} /></button>}
                       </div>
                     </td>
                   </tr>
@@ -429,7 +433,12 @@ function ContactFormPage({ title, description, submitLabel, sectionTitle, fields
   );
 }
 
-function ContactRecordDetailPage({ contact, onBack, onEdit }) {
+function ContactRecordDetailPage({
+  contact,
+  onBack,
+  onEdit,
+  canEdit = true,
+}) {
   return (
     <div className="lf-page leads-page contact-record-page">
       <section className="payment-record-detail contact-record-detail" aria-label="Contact details">
@@ -440,7 +449,7 @@ function ContactRecordDetailPage({ contact, onBack, onEdit }) {
             <p>{contact.company || '-'} / {contact.designation || '-'}</p>
           </div>
           <div className="contact-record-actions">
-            <button className="payment-record-edit" type="button" onClick={onEdit}>Edit</button>
+            {canEdit && <button className="payment-record-edit" type="button" onClick={onEdit}>Edit</button>}
           </div>
         </header>
 
@@ -542,7 +551,18 @@ function ContactFormSelect({ label, value, options, onChange }) {
   );
 }
 
-function ContactDetailsPage({ contact, pageClassName, title, ariaLabel, fields, extraContent, showActivitySections, onClose, onEdit }) {
+function ContactDetailsPage({
+  contact,
+  pageClassName,
+  title,
+  ariaLabel,
+  fields,
+  extraContent,
+  showActivitySections,
+  onClose,
+  onEdit,
+  canEdit = true,
+}) {
   return (
     <div className={`lf-page leads-page contacts-page${pageClassName ? ` ${pageClassName}` : ''}`}>
       <section className="lead-detail-page contact-detail-page" aria-label={ariaLabel}>
@@ -609,7 +629,7 @@ function ContactDetailsPage({ contact, pageClassName, title, ariaLabel, fields, 
           )}
 
           <div className="lf-drawer-actions lf-drawer-actions--footer">
-            <button type="button" onClick={onEdit}><Edit3 size={15} />Edit</button>
+            {canEdit && <button type="button" onClick={onEdit}><Edit3 size={15} />Edit</button>}
           </div>
         </div>
       </section>

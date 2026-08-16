@@ -7,7 +7,7 @@ import { formatCurrency, paymentToForm } from '../utils/format';
 
 const paymentDateRangeOptions = ['All', 'Today', 'Last 7 Days', 'This Month'];
 
-export default function PaymentsPage({ payments, setPayments, setMessage }) {
+export default function PaymentsPage({ payments, setPayments, setMessage, canCreate = true, canEdit = true, canDelete = true }) {
   const [filters, setFilters] = useState({ status: 'All', method: 'All', company: 'All', salesperson: 'All', dateRange: 'All', from: '', to: '' });
   const [drawer, setDrawer] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -74,10 +74,11 @@ export default function PaymentsPage({ payments, setPayments, setMessage }) {
   if (drawer === 'view' && selected) {
     return (
       <PaymentDetailPage
-        payment={selected}
-        onBack={() => setDrawer(null)}
-        onEdit={() => openEdit(selected)}
-      />
+      payment={selected}
+      onBack={() => setDrawer(null)}
+      onEdit={() => openEdit(selected)}
+      canEdit={canEdit}
+    />
     );
   }
 
@@ -108,7 +109,7 @@ export default function PaymentsPage({ payments, setPayments, setMessage }) {
             <SearchableSelect className="payment-inline-filter payment-status-filter" label="Status" value={filters.status} options={paymentStatuses} onChange={(status) => updateFilter('status', status)} placeholder="Search status" />
             <SearchableSelect className="payment-inline-filter payment-method-filter" label="Method" value={filters.method} options={paymentMethods} onChange={(method) => updateFilter('method', method)} placeholder="Search method" />
             <SearchableSelect className="payment-inline-filter payment-date-filter" label="Date range" value={filters.dateRange} options={paymentDateRangeOptions} onChange={updateDateRange} placeholder="Search date range" />
-            <button className="payment-record-btn" type="button" onClick={openRecord}><PlusCircle size={17} />New Payment</button>
+            {canCreate && <button className="payment-record-btn" type="button" onClick={openRecord}><PlusCircle size={17} />New Payment</button>}
           </div>
         </section>
         <Table
@@ -185,7 +186,12 @@ function PaymentFormPage({ title, description, form, setForm, onSubmit, onCancel
   );
 }
 
-function PaymentDetailPage({ payment, onBack, onEdit }) {
+function PaymentDetailPage({
+  payment,
+  onBack,
+  onEdit,
+  canEdit = true,
+}) {
   return (
     <div className="lf-page leads-page payment-detail-page">
       <section className="payment-record-detail" aria-label="Payment details">
@@ -195,7 +201,7 @@ function PaymentDetailPage({ payment, onBack, onEdit }) {
             <h2>{payment.invoice || 'Payment Details'}</h2>
             <p>{payment.company || '-'} / {payment.opportunity || '-'}</p>
           </div>
-          <button className="payment-record-edit" type="button" onClick={onEdit}>Edit</button>
+          {canEdit && <button className="payment-record-edit" type="button" onClick={onEdit}>Edit</button>}
         </header>
 
         <section className="payment-record-summary" aria-label="Payment summary">
