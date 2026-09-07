@@ -21,23 +21,23 @@ export function StatusBadge({ status }) {
     return <span className={`lf-badge lf-badge--${tone}`}>{status}</span>;
 }
 
-export function PrimaryButton({ children, onClick, type = 'button' }) {
+export function PrimaryButton({ children, onClick, type = 'button', disabled = false }) {
     return (
-        <button type={type} onClick={onClick} className="button primary">
+        <button type={type} onClick={onClick} className="button primary" disabled={disabled}>
             {children}
         </button>
     );
 }
 
-export function SecondaryButton({ children, onClick, type = 'button' }) {
+export function SecondaryButton({ children, onClick, type = 'button', disabled = false }) {
     return (
-        <button type={type} onClick={onClick} className="button secondary">
+        <button type={type} onClick={onClick} className="button secondary" disabled={disabled}>
             {children}
         </button>
     );
 }
 
-export function TextInput({ label, value, onChange, type = 'text', placeholder, required = false }) {
+export function TextInput({ label, value, onChange, type = 'text', placeholder, required = false, disabled = false }) {
     return (
         <div className="field">
             <label>
@@ -49,6 +49,7 @@ export function TextInput({ label, value, onChange, type = 'text', placeholder, 
                 value={value}
                 onChange={(event) => onChange(event.target.value)}
                 placeholder={placeholder || label}
+                disabled={disabled}
             />
         </div>
     );

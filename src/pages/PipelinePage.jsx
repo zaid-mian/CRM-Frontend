@@ -1,12 +1,12 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { ArrowLeft, ChevronDown, Edit, FileCog, FileText, Filter, Lock, MoreHorizontal, Pin, Plus, Settings, Trash2, Users } from 'lucide-react';
-import { Confirm, DetailBlock, DetailGrid, HighlightedText, IconButton, Modal, PanelActions, SearchableSelect, SearchBox, SelectField, TextField } from '../components/ui';
+import { Confirm, DetailBlock, DetailGrid, HighlightedText, IconButton, Modal, PanelActions, SearchableSelect, SearchBox, SelectField, TextField, TextArea } from '../components/ui';
 import { assignLeadOptions, companies, emptyLead, leadSources, owners, priorities, products, stages } from '../data/crmData';
 import { formatCurrency } from '../utils/format';
 import CompaniesPage from './CompaniesPage';
 import ContactsPage from './ContactsPage';
-
-const standardPipelineStageNames = ['New', 'Contacted', 'Confirm', 'Proposal', 'Negotiation', 'Won', 'Lost'];
+import { authRequest, apiGet } from '../App';
+import { leadBackendToUi, opportunityBackendToUi, normalizeLabel, mapStageNameToBackendStage } from '../utils/adapters';
 
 const standardStageDescriptions = {
   New: 'Initial contact pending',
@@ -18,12 +18,6 @@ const standardStageDescriptions = {
   Lost: 'Deal lost or abandoned',
 };
 
-const makeStandardStageList = () => standardPipelineStageNames.map((stage) => ({
-  id: stage,
-  name: stage,
-  owner: owners.find((item) => item !== 'All') || 'Ali Raza',
-}));
-
 const customFieldTypes = ['Short Text', 'Long Text', 'Number', 'Date', 'Checkbox', 'Dropdown'];
 
 const getCustomFieldInputType = (type) => (
@@ -32,23 +26,52 @@ const getCustomFieldInputType = (type) => (
 
 const normalizeCustomFieldType = (type) => (type === 'Text' ? 'Short Text' : type);
 
-const pipelineDummyLeads = [
-  { id: 'DLD-2001', clientId: 'CL-2004', customer: 'Omar Farooq', company: 'Cedar Labs', phone: '+92 333 4455667', owner: 'Ali Raza', priority: 'Medium', status: 'New' },
-  { id: 'DLD-2002', clientId: 'CL-2005', customer: 'Sana Mir', company: 'Metro Health', phone: '+92 321 1122445', owner: 'Sara Ahmed', priority: 'High', status: 'Contacted' },
-  { id: 'DLD-2003', clientId: 'CL-2006', customer: 'Bilal Khan', company: 'Northstar Foods', phone: '+92 300 7788991', owner: 'Ali Raza', priority: 'Low', status: 'Confirm' },
-  { id: 'DLD-2004', clientId: 'CL-2007', customer: 'Nadia Sheikh', company: 'Cedar Labs', phone: '+92 333 2211009', owner: 'Sara Ahmed', priority: 'Medium', status: 'Proposal' },
-  { id: 'DLD-2005', clientId: 'CL-2008', customer: 'Tariq Mehmood', company: 'Metro Health', phone: '+92 321 6677889', owner: 'Ali Raza', priority: 'High', status: 'Negotiation' },
-  { id: 'DLD-2006', clientId: 'CL-2009', customer: 'Hira Nadeem', company: 'Cedar Labs', phone: '+92 333 1122334', owner: 'Sara Ahmed', priority: 'Low', status: 'Won' },
-  { id: 'DLD-2007', clientId: 'CL-2010', customer: 'Zain Qureshi', company: 'Northstar Foods', phone: '+92 300 9988776', owner: 'Ali Raza', priority: 'Medium', status: 'Lost' },
-  { id: 'DLD-2008', clientId: 'CL-2011', customer: 'Mehwish Ali', company: 'Metro Health', phone: '+92 321 4567890', owner: 'Sara Ahmed', priority: 'Medium', status: 'New' },
-  { id: 'DLD-2009', clientId: 'CL-2012', customer: 'Danish Iqbal', company: 'Cedar Labs', phone: '+92 333 7654321', owner: 'Ali Raza', priority: 'High', status: 'Contacted' },
-  { id: 'DLD-2010', clientId: 'CL-2013', customer: 'Rabia Noor', company: 'Northstar Foods', phone: '+92 300 5566778', owner: 'Sara Ahmed', priority: 'Low', status: 'Proposal' },
-];
+const getResponseList = (res) => {
+  if (!res) return [];
+  if (Array.isArray(res)) return res;
+  if (res.success && Array.isArray(res.data)) return res.data;
+  if (res.data && Array.isArray(res.data.results)) return res.data.results;
+  if (Array.isArray(res.results)) return res.results;
+  return [];
+};
 
+const getResponseObject = (res) => {
+  if (!res) return null;
+  if (res.success && res.data) return res.data;
+  if (res.success === true) {
+    const { success, message, ...rest } = res;
+    return Object.keys(rest).length ? rest : res;
+  }
+  return res;
+};
 
-export default function PipelinePage({ leads, setLeads, opportunities, setOpportunities, setMessage, dynamicStagePage, setDynamicStagePage, activeStagePage, setActiveStagePage, opportunityStageConfig, setOpportunityStageConfig, canCreate = true, canEdit = true, canDelete = true }) {
-  const [stageList, setStageList] = useState(makeStandardStageList);
-  const [dummyPipelineLeads, setDummyPipelineLeads] = useState(pipelineDummyLeads);
+const isResponseSuccess = (res) => {
+  if (!res) return false;
+  if (res.success === true) return true;
+  return true;
+};
+
+export default function PipelinePage({
+  currentUser,
+  leads,
+  setLeads,
+  opportunities,
+  setOpportunities,
+  setMessage,
+  dynamicStagePage,
+  setDynamicStagePage,
+  activeStagePage,
+  setActiveStagePage,
+  opportunityStageConfig,
+  setOpportunityStageConfig,
+  canCreate = true,
+  canEdit = true,
+  canDelete = true
+}) {
+  const [activePipelineId, setActivePipelineId] = useState(null);
+  const [pipelinesList, setPipelinesList] = useState([]);
+  const [stageList, setStageList] = useState([]);
+  const [availableUsers, setAvailableUsers] = useState([]);
   const [search, setSearch] = useState('');
   const [filters, setFilters] = useState({ stage: 'All', owner: 'All', company: 'All', priority: 'All', product: 'All' });
   const [dragged, setDragged] = useState(null);
@@ -58,16 +81,16 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
   const [selected, setSelected] = useState(null);
   const [selectedLead, setSelectedLead] = useState(null);
   const [stageModalOpen, setStageModalOpen] = useState(false);
-  const [stageForm, setStageForm] = useState({ name: '', owner: owners[1] });
+  const [stageForm, setStageForm] = useState({ name: '', owner: '' });
   const [opportunityModalOpen, setOpportunityModalOpen] = useState(false);
   const [opportunityForm, setOpportunityForm] = useState({
     dealName: '',
-    company: companies.find((item) => item !== 'All') || '',
+    company: '',
     contact: '',
     value: '',
     closeDate: '',
     stage: 'New',
-    owner: owners.find((item) => item !== 'All') || '',
+    owner: '',
     notes: '',
   });
   const [editingStage, setEditingStage] = useState(null);
@@ -99,7 +122,46 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
   const [renamePipelineOpen, setRenamePipelineOpen] = useState(false);
   const [pipelineNameDraft, setPipelineNameDraft] = useState('');
   const [newPipelineName, setNewPipelineName] = useState('');
-  const [newPipelineStages, setNewPipelineStages] = useState([{ id: 'custom-stage-1', name: '' }]);
+  const [newPipelineStages, setNewPipelineStages] = useState([{ id: 'custom-stage-1', name: '', color: '#6c757d' }]);
+  const [originalStages, setOriginalStages] = useState([]);
+  const [isCreatingNewPipeline, setIsCreatingNewPipeline] = useState(false);
+  const [wizardConversionStageIdx, setWizardConversionStageIdx] = useState(null);
+  const [wizardHasWon, setWizardHasWon] = useState(true);
+  const [wizardWonStageIdx, setWizardWonStageIdx] = useState(null);
+  const [wizardHasLost, setWizardHasLost] = useState(true);
+  const [wizardLostStageIdx, setWizardLostStageIdx] = useState(null);
+  const [wizardEnableForm, setWizardEnableForm] = useState(false);
+  const [wizardFormFields, setWizardFormFields] = useState([]);
+  const [newFieldDraft, setNewFieldDraft] = useState({ label: '', type: 'TEXT', required: false, options: '' });
+  const [wizardSaveLogs, setWizardSaveLogs] = useState([]);
+  const [wizardSaving, setWizardSaving] = useState(false);
+
+  const [activeDrawerCard, setActiveDrawerCard] = useState(null);
+  const [drawerMode, setDrawerMode] = useState(null);
+
+  const canAssignToOthers = (resource) => {
+    if (!currentUser) return false;
+    if (currentUser.is_staff || currentUser.is_superuser) return true;
+    if (currentUser.user_type === 'ADMIN') return true;
+    const scope = currentUser.permissions?.[resource]?.ASSIGN;
+    return scope === 'ALL';
+  };
+
+  const isCardEditable = (record, type) => {
+    if (!currentUser) return false;
+    if (currentUser.is_staff || currentUser.is_superuser) return true;
+    if (currentUser.user_type === 'ADMIN') return true;
+    if (currentUser.role === 'Administrator' || currentUser.role === 'Manager' || currentUser.role === 'Salesperson Manager') return true;
+    return record.owner === currentUser.id;
+  };
+  const [drawerForm, setDrawerForm] = useState({});
+  const [drawerStages, setDrawerStages] = useState([]);
+  const [conversionModalOpen, setConversionModalOpen] = useState(false);
+  const [isCustomFormActive, setIsCustomFormActive] = useState(false);
+  const [convertingLeadStageId, setConvertingLeadStageId] = useState(null);
+  const [reassignModalOpen, setReassignModalOpen] = useState(false);
+  const [reassignStageId, setReassignStageId] = useState('');
+
   const opportunityStageId = opportunityStageConfig.id;
   const opportunityStageMode = opportunityStageConfig.mode;
   const customFields = opportunityStageConfig.fields;
@@ -141,7 +203,7 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
     { key: 'amount', label: 'Deal Amount', type: 'number' },
     { key: 'closeDate', label: 'Expected Close Date', type: 'date' },
     { key: 'stage', label: 'Stage', kind: 'select', options: stageList.map((stage) => stage.name) },
-    { key: 'owner', label: 'Assigned Salesperson', kind: 'select', options: owners.filter((item) => item !== 'All') },
+    { key: 'owner', label: 'Assigned Salesperson', kind: 'select', options: availableUsers.map((u) => u.full_name || u.username) },
     { key: 'description', label: 'Description' },
   ];
   const opportunityStageDetailFields = [
@@ -156,66 +218,201 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
     { key: 'description', label: 'Description' },
   ];
 
+  // Helper: translate owner IDs to names
+  const getOwnerName = (ownerId) => {
+    if (!ownerId) return 'Unassigned';
+    const found = availableUsers.find(u => String(u.id) === String(ownerId));
+    return found ? (found.full_name || found.username) : `User ${ownerId}`;
+  };
+
+  const fetchUsers = async () => {
+    try {
+      const res = await apiGet('/api/admin/users/');
+      const data = getResponseList(res);
+      if (data) {
+        setAvailableUsers(data);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const fetchStages = async (pipelineId) => {
+    try {
+      const path = pipelineId ? `/api/pipeline/stages/?pipeline=${pipelineId}` : '/api/pipeline/stages/';
+      const res = await apiGet(path);
+      const data = getResponseList(res);
+      if (data) {
+        const mapped = data.map((stage) => ({
+          id: stage.id,
+          name: normalizeLabel(stage.name),
+          owner: 'System',
+          stage_type: stage.stage_type,
+          entity_type: stage.entity_type,
+          order: stage.order,
+          role: stage.stage_type === 'WON' ? 'won' : stage.stage_type === 'LOST' ? 'lost' : undefined,
+        }));
+        mapped.sort((a, b) => a.order - b.order);
+        setStageList(mapped);
+        return mapped;
+      }
+    } catch (err) {
+      console.error(err);
+    }
+    return [];
+  };
+
+  const fetchAllLeadsAndOpportunities = async () => {
+    if (!activePipelineId) return;
+    try {
+      const res = await apiGet(`/api/pipeline/?pipeline=${activePipelineId}`);
+      const cards = getResponseList(res);
+      
+      const parsedLeads = [];
+      const parsedOpps = [];
+      
+      cards.forEach(card => {
+        if (card.entity_type === 'lead') {
+          parsedLeads.push({
+            id: `LD-${card.id}`,
+            backendId: card.id,
+            clientId: `LD-${card.id}`,
+            customer: card.name || 'Unnamed Lead',
+            company: card.company_name || '',
+            phone: card.phone || '',
+            email: card.email || '',
+            source: 'Website',
+            owner: card.assigned_salesperson_id || '',
+            priority: 'Medium',
+            status: normalizeLabel(card.stage) || 'New',
+            leadValue: Number(card.amount || 0),
+            estimatedValue: Number(card.amount || 0),
+            notes: card.notes || '',
+            pipeline: activePipelineId,
+            pipeline_stage: card.pipeline_stage_id || '',
+            is_converted: false
+          });
+        } else {
+          parsedOpps.push({
+            id: `OP-${card.id}`,
+            backendId: card.id,
+            name: card.name || 'Unnamed Opportunity',
+            company: card.company_name || '',
+            companyId: card.company_id || null,
+            contact: '',
+            value: Number(card.amount || 0),
+            priority: 'Medium',
+            closeDate: card.expected_close_date ? String(card.expected_close_date).slice(0, 10) : '',
+            owner: card.assigned_salesperson_id || '',
+            stage: normalizeLabel(card.stage) || 'New',
+            product: 'CRM Suite',
+            notes: card.notes || '',
+            pipeline: activePipelineId,
+            pipeline_stage: card.pipeline_stage_id || '',
+            won: card.stage === 'WON' || card.stage === 'Won',
+            closed: card.stage === 'WON' || card.stage === 'LOST' || card.stage === 'Won' || card.stage === 'Lost',
+            probability: card.probability !== undefined && card.probability !== null ? Number(card.probability) : null
+          });
+        }
+      });
+      
+      setLeads(parsedLeads);
+      setOpportunities(parsedOpps);
+    } catch (err) {
+      console.error(err);
+      setMessage(err.message || 'Failed to fetch pipeline workspace data.');
+    }
+  };
+
+  const fetchPipelines = async () => {
+    try {
+      const res = await apiGet('/api/pipelines/');
+      const data = getResponseList(res);
+      if (data && data.length > 0) {
+        setPipelinesList(data);
+        const def = data.find(p => p.is_default) || data[0];
+        setActivePipelineId(def.id);
+        setActivePipeline({ type: def.is_default ? 'standard' : 'custom', name: def.name });
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  useEffect(() => {
+    fetchUsers();
+    fetchPipelines();
+  }, []);
+
+  useEffect(() => {
+    if (activePipelineId) {
+      fetchStages(activePipelineId);
+      fetchAllLeadsAndOpportunities();
+    }
+  }, [activePipelineId]);
+
   const updateOpportunityField = (field, value) => {
     setOpportunityForm((current) => ({ ...current, [field]: value }));
     if (String(value).trim()) {
       setOpportunityErrors((current) => current.filter((error) => error !== opportunityFieldLabels[field]));
     }
   };
+
   const renderCustomDropInput = (field) => {
-    const fieldType = normalizeCustomFieldType(field.type);
+    const fieldType = field.field_type || field.type;
+    const key = field.label;
     const updateValue = (value) => {
-      setCustomValues((current) => ({ ...current, [field.id]: value }));
-      setCustomErrors((current) => current.filter((id) => id !== field.id));
+      setCustomValues((current) => ({ ...current, [key]: value }));
+      setCustomErrors((current) => current.filter((lbl) => lbl !== key));
     };
 
-    if (fieldType === 'Long Text') {
-      return <textarea rows="4" value={customValues[field.id] || ''} onChange={(event) => updateValue(event.target.value)} />;
+    if (fieldType === 'TEXTAREA' || fieldType === 'Long Text') {
+      return <textarea rows="4" value={customValues[key] || ''} onChange={(event) => updateValue(event.target.value)} />;
     }
 
-    if (fieldType === 'Checkbox') {
+    if (fieldType === 'CHECKBOX' || fieldType === 'Checkbox') {
       return (
         <label className="custom-checkbox-field">
-          <input type="checkbox" checked={customValues[field.id] === 'Yes'} onChange={(event) => updateValue(event.target.checked ? 'Yes' : '')} />
+          <input type="checkbox" checked={Boolean(customValues[key])} onChange={(event) => updateValue(event.target.checked)} />
           <span>Yes</span>
         </label>
       );
     }
 
-    if (fieldType === 'Dropdown') {
+    if (fieldType === 'DROPDOWN' || fieldType === 'Dropdown') {
+      const opts = field.options || [];
       return (
-        <select value={customValues[field.id] || ''} onChange={(event) => updateValue(event.target.value)}>
+        <select value={customValues[key] || ''} onChange={(event) => updateValue(event.target.value)}>
           <option value="">Select option</option>
-          <option value="Option 1">Option 1</option>
-          <option value="Option 2">Option 2</option>
-          <option value="Option 3">Option 3</option>
+          {opts.map(opt => (
+            <option key={opt} value={opt}>{opt}</option>
+          ))}
         </select>
       );
     }
 
-    return <input type={getCustomFieldInputType(fieldType)} value={customValues[field.id] || ''} onChange={(event) => updateValue(event.target.value)} />;
+    const inputType = fieldType === 'DATE' || fieldType === 'Date' ? 'date' : fieldType === 'NUMBER' || fieldType === 'Number' ? 'number' : 'text';
+    return <input type={inputType} value={customValues[key] || ''} onChange={(event) => updateValue(event.target.value)} />;
   };
 
   const filtered = useMemo(() => opportunities
-    .filter((item) => [item.id, item.name, item.company, item.contact, item.owner, item.stage, item.priority, item.product, item.closeDate]
+    .filter((item) => [item.id, item.name, item.company, item.contact, item.stage]
       .some((value) => String(value || '').toLowerCase().includes(search.toLowerCase())))
     .filter((item) => filters.stage === 'All' || item.stage === filters.stage)
-    .filter((item) => filters.owner === 'All' || item.owner === filters.owner)
-    .filter((item) => filters.company === 'All' || item.company === filters.company)
-    .filter((item) => filters.priority === 'All' || item.priority === filters.priority)
-    .filter((item) => filters.product === 'All' || item.product === filters.product), [opportunities, search, filters]);
+    .filter((item) => {
+      if (filters.owner === 'All') return true;
+      return getOwnerName(item.owner) === filters.owner;
+    }), [opportunities, search, filters, availableUsers]);
+
   const stageLeads = useMemo(() => leads
     .filter((lead) => !lead.isConverted)
-    .filter((lead) => [lead.clientId, lead.customer, lead.company, lead.phone, lead.email, lead.owner, lead.status, lead.priority]
+    .filter((lead) => [lead.clientId, lead.customer, lead.company, lead.phone, lead.email, lead.status]
       .some((value) => String(value || '').toLowerCase().includes(search.toLowerCase())))
-    .sort((a, b) => {
-      if (!duplicateLeadId) return 0;
-      if (a.id === duplicateLeadId) return -1;
-      if (b.id === duplicateLeadId) return 1;
-      return 0;
-    }), [leads, search, duplicateLeadId]);
+    .filter((lead) => {
+      if (filters.owner === 'All') return true;
+      return getOwnerName(lead.owner) === filters.owner;
+    }), [leads, search, filters, availableUsers]);
 
-  const totalValue = filtered.reduce((sum, item) => sum + item.value, 0);
   const totalPipeline = filtered.length + stageLeads.length;
   const openDeals = filtered.filter((item) => !['Won', 'Lost'].includes(item.stage)).length;
   const totalRevenue = filtered
@@ -224,7 +421,9 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
   const expectedRevenue = filtered
     .filter((item) => !['Won', 'Lost'].includes(item.stage))
     .reduce((sum, item) => sum + Number(item.value || 0), 0);
+
   const updateFilter = (key, value) => setFilters((current) => ({ ...current, [key]: value }));
+
   const stageProbability = {
     Prospecting: 10,
     Qualified: 25,
@@ -233,15 +432,11 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
     Negotiation: 80,
     Won: 100,
   };
+
   const makeNextOpportunityId = () => {
-    const usedNumbers = [
-      ...opportunities.map((item) => item.id),
-      ...stageRecords.map((record) => record.opportunityId || record.id),
-    ]
-      .map((id) => Number(String(id || '').match(/^OP-(\d+)$/)?.[1]))
-      .filter(Number.isFinite);
-    return `OP-${Math.max(3000, ...usedNumbers) + 1}`;
+    return `OP-${Date.now()}`;
   };
+
   const opportunityId = editingOpportunityId || makeNextOpportunityId();
   const probability = stageProbability[opportunityForm.stage] ?? 10;
   const configuredOpportunityStageName = opportunityStageConfig.name || dynamicStagePage || '';
@@ -262,190 +457,57 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
     return date.toISOString().slice(0, 10);
   };
   const makeInitialDealName = (lead) => `${lead.company || lead.customer || 'Lead'} - Initial Opportunity`;
-  const syncLeadStatus = (leadId, stageName) => {
-    if (!leadId) return;
-    setLeads((current) => current.map((lead) => lead.id === leadId
-      ? { ...lead, status: stageName, lastActivity: `Pipeline stage: ${stageName}` }
-      : lead));
-    setDummyPipelineLeads((current) => current.map((lead) => lead.id === leadId
-      ? { ...lead, status: stageName, lastActivity: `Pipeline stage: ${stageName}` }
-      : lead));
-  };
-  const completeLeadConversion = (leadId, stageName) => {
-    if (!leadId) return;
-    setLeads((current) => current.map((lead) => lead.id === leadId
-      ? { ...lead, status: stageName, isConverted: true, lastActivity: `Converted to opportunity: ${stageName}` }
-      : lead));
-    setDummyPipelineLeads((current) => current.filter((lead) => lead.id !== leadId));
-  };
-  const resolveLeadOwner = (assignLead) => assignLead === 'Decide Later' ? 'Not Assign' : assignLead;
-  const normalizePhone = (value) => String(value || '').replace(/\D/g, '');
-  const getNextClientId = (currentLeads) => {
-    const allIds = currentLeads.map((record) => Number(String(record.clientId || '').replace('CL-', ''))).filter(Number.isFinite);
-    return `CL-${Math.max(1000, ...allIds) + 1}`;
-  };
+
   const openNewLead = () => {
-    setLeadForm(emptyLead);
+    const defaultLead = { ...emptyLead };
+    if (currentUser && !canAssignToOthers('leads')) {
+      defaultLead.assignLead = currentUser.id;
+    }
+    setLeadForm(defaultLead);
     setDuplicateLeadId(null);
     setLeadModalOpen(true);
   };
-  const saveLead = (event) => {
+
+  const saveLead = async (event) => {
     event.preventDefault();
     if (!leadForm.customer.trim() || !leadForm.phone.trim()) {
       setMessage('Full Name and Phone Number are required.');
       return;
     }
-    const duplicateLead = leads.find((lead) => normalizePhone(lead.phone) === normalizePhone(leadForm.phone));
-    if (duplicateLead) {
-      setLeads((current) => [duplicateLead, ...current.filter((lead) => lead.id !== duplicateLead.id)]);
-      setDuplicateLeadId(duplicateLead.id);
-      setSearch('');
-      setLeadModalOpen(false);
-      setMessage('User already exists with this phone number.');
-      return;
-    }
-    setLeads((current) => [{
-      ...leadForm,
-      id: `LD-${1000 + current.length + 1}`,
-      clientId: getNextClientId(current),
-      date: new Date().toISOString().slice(0, 10),
-      owner: resolveLeadOwner(leadForm.assignLead),
-      status: stageList[0]?.name || 'New',
-      leadValue: 0,
-      lastActivity: 'Lead created',
-      nextFollowUp: '',
-    }, ...current]);
-    setLeadModalOpen(false);
-    setMessage('Lead created successfully.');
-  };
-
-  const createStage = (event) => {
-    event.preventDefault();
-    const name = stageForm.name.trim();
-    if (!name || !stageForm.owner) {
-      setMessage('Stage Name and Owner are required.');
-      return;
-    }
-    if (stageList.some((stage) => stage.id !== editingStage?.id && stage.name.toLowerCase() === name.toLowerCase())) {
-      setMessage('Stage already exists.');
-      return;
-    }
-    if (editingStage) {
-      setStageList((current) => {
-        const nextStages = current.map((stage) => stage.id === editingStage.id ? { ...stage, name, owner: stageForm.owner } : stage);
-        if (activePipeline.type === 'custom') {
-          setSavedCustomPipeline((currentPipeline) => currentPipeline ? { ...currentPipeline, stages: nextStages } : currentPipeline);
-        }
-        return nextStages;
+    try {
+      const res = await authRequest('/api/leads/', {
+        method: 'POST',
+        body: JSON.stringify({
+          full_name: leadForm.customer.trim(),
+          company_name: leadForm.company.trim(),
+          phone: leadForm.phone.trim(),
+          email: leadForm.email.trim() || null,
+          lead_source: leadForm.source ? leadForm.source.toUpperCase().replace(/\s+/g, '_') : 'WEBSITE',
+          priority: leadForm.priority ? leadForm.priority.toUpperCase() : 'MEDIUM',
+          assigned_salesperson: leadForm.assignLead && leadForm.assignLead !== 'Decide Later' ? Number(leadForm.assignLead) : null,
+          notes: leadForm.notes,
+          pipeline: activePipelineId,
+        })
       });
-      setOpportunities((current) => current.map((item) => item.stage === editingStage.name ? { ...item, stage: name } : item));
-      setMessage('Stage updated successfully.');
-    } else {
-      setStageList((current) => {
-        const nextStages = [...current, { id: name, name, owner: stageForm.owner }];
-        if (activePipeline.type === 'custom') {
-          setSavedCustomPipeline((currentPipeline) => currentPipeline ? { ...currentPipeline, stages: nextStages } : currentPipeline);
-        }
-        return nextStages;
-      });
-      setMessage('Stage created successfully.');
+      if (isResponseSuccess(res)) {
+        fetchAllLeadsAndOpportunities();
+        setLeadModalOpen(false);
+        setMessage('Lead created successfully.');
+      }
+    } catch (err) {
+      setMessage(err.message || 'Failed to create lead.');
     }
-    setStageForm({ name: '', owner: owners[1] });
-    setStageModalOpen(false);
-    setEditingStage(null);
-  };
-
-  const openCreateStage = () => {
-    setEditingStage(null);
-    setStageForm({ name: '', owner: owners[1] });
-    setStageModalOpen(true);
-  };
-
-  const openLeadOpportunity = (lead, stageName) => {
-    if (isConfiguredOpportunityStage(stageName) && opportunityStageMode === 'custom') {
-      setCustomErrors([]);
-      setCustomValues(customFields.reduce((values, field) => ({ ...values, [field.id]: '' }), {}));
-      setCustomDrop({ type: 'lead', lead, stageName });
-      setDraggedLead(null);
-      return;
-    }
-    setOpportunityErrors([]);
-    setConvertingLeadId(lead.id);
-    setOpportunityForm({
-      dealName: makeInitialDealName(lead),
-      company: lead.company || companies.find((item) => item !== 'All') || '',
-      contact: lead.customer || '',
-      value: lead.leadValue ? String(lead.leadValue) : '0.00',
-      closeDate: lead.nextFollowUp || lead.expectedCloseDate || defaultOpportunityCloseDate(),
-      stage: stageName,
-      owner: lead.owner && lead.owner !== 'Not Assign' ? lead.owner : owners.find((item) => item !== 'All') || '',
-      notes: lead.notes || '',
-    });
-    setOpportunityModalOpen(true);
-    setDraggedLead(null);
-  };
-
-  const moveLeadToStage = (lead, stageName) => {
-    if (isConfiguredOpportunityStage(stageName)) {
-      openLeadOpportunity(lead, stageName);
-      return;
-    }
-    syncLeadStatus(lead.id, stageName);
-    setDraggedLead(null);
-    setMessage('Lead stage updated successfully.');
-  };
-
-  const openItemOpportunityStage = (item, stageName) => {
-    if (isConfiguredOpportunityStage(stageName) && opportunityStageMode === 'custom') {
-      setCustomErrors([]);
-      setCustomValues(customFields.reduce((values, field) => ({
-        ...values,
-        [field.id]: field.label.toLowerCase().includes('company') ? item.company : field.label.toLowerCase().includes('contact') ? item.contact : '',
-      }), {}));
-      setCustomDrop({ type: 'opportunity', item, stageName });
-      setDragged(null);
-      return;
-    }
-    if (isConfiguredOpportunityStage(stageName) && opportunityStageMode === 'standard') {
-      setOpportunityErrors([]);
-      setSelected(null);
-      setConvertingLeadId(null);
-      setEditingOpportunityId(item.id);
-      setOpportunityForm({
-        dealName: item.name,
-        company: item.company,
-        contact: item.contact,
-        value: String(item.value),
-        closeDate: item.closeDate,
-        stage: stageName,
-        owner: item.owner,
-        notes: item.notes || '',
-      });
-      setOpportunityModalOpen(true);
-      setDragged(null);
-      return;
-    }
-    if (item.stage === stageName) {
-      setDragged(null);
-      return;
-    }
-    setOpportunities((current) => current.map((opportunity) => (
-      opportunity.id === item.id ? { ...opportunity, stage: stageName } : opportunity
-    )));
-    syncLeadStatus(item.leadId, stageName);
-    setDragged(null);
-    setMessage('Opportunity stage updated successfully.');
   };
 
   const openEditOpportunity = (opportunity) => {
     setOpportunityErrors([]);
     setSelected(null);
     setConvertingLeadId(null);
-    setEditingOpportunityId(opportunity.id);
+    setEditingOpportunityId(opportunity.backendId || opportunity.id);
     setOpportunityForm({
       dealName: opportunity.name,
       company: opportunity.company,
-      contact: opportunity.contact,
+      contact: opportunity.contact || opportunity.company,
       value: String(opportunity.value),
       closeDate: opportunity.closeDate,
       stage: opportunity.stage,
@@ -455,13 +517,11 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
     setOpportunityModalOpen(true);
   };
 
-  const saveOpportunity = (event) => {
+  const saveOpportunity = async (event) => {
     event.preventDefault();
     const amount = Number(opportunityForm.value);
     const missing = [
       !opportunityForm.dealName.trim() && 'Deal Name',
-      !opportunityForm.company && 'Related Company',
-      !opportunityForm.contact.trim() && 'Primary Contact',
       Number.isNaN(amount) && 'Deal Amount',
       !opportunityForm.closeDate && 'Expected Close Date',
       !opportunityForm.stage && 'Stage',
@@ -472,71 +532,69 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
       return;
     }
     setOpportunityErrors([]);
-    const nextOpportunityId = editingOpportunityId || makeNextOpportunityId();
-    const nextOpportunity = {
-      name: opportunityForm.dealName.trim(),
-      company: opportunityForm.company,
-      contact: opportunityForm.contact,
-      value: amount,
-      priority: amount >= 800000 ? 'High' : amount >= 400000 ? 'Medium' : 'Low',
-      closeDate: opportunityForm.closeDate,
-      owner: opportunityForm.owner,
-      stage: opportunityForm.stage,
-      product: 'CRM Suite',
-      notes: opportunityForm.notes,
-      leadId: convertingLeadId || opportunities.find((item) => item.id === editingOpportunityId)?.leadId,
-    };
-    setOpportunities((current) => editingOpportunityId
-      ? current.map((item) => item.id === editingOpportunityId ? { ...item, ...nextOpportunity } : item)
-      : [{ id: nextOpportunityId, ...nextOpportunity }, ...current]);
-    if (stageList.find((stage) => stage.id === opportunityStageId)?.name === opportunityForm.stage) {
-      setStageRecords((current) => [{
-        id: nextOpportunityId,
-        opportunityId: nextOpportunityId,
-        stage: opportunityForm.stage,
-        date: new Date().toISOString().slice(0, 10),
-        dealName: nextOpportunity.name,
-        company: opportunityForm.company,
-        contact: opportunityForm.contact,
-        amount: formatCurrency(amount),
-        closeDate: opportunityForm.closeDate,
-        owner: opportunityForm.owner,
-        description: opportunityForm.notes,
-        leadId: convertingLeadId || opportunities.find((item) => item.id === editingOpportunityId)?.leadId,
-        status: 'Active',
-        sourceName: nextOpportunity.name,
-        sourceId: editingOpportunityId || convertingLeadId || nextOpportunityId,
-        createdAt: new Date().toISOString().slice(0, 10),
-        values: {
-          dealName: nextOpportunity.name,
-          company: opportunityForm.company,
-          contact: opportunityForm.contact,
-          value: amount,
-          closeDate: opportunityForm.closeDate,
-          owner: opportunityForm.owner,
-          description: opportunityForm.notes,
-        },
-      }, ...current]);
-      setDynamicStagePage(opportunityForm.stage);
-    }
+
+    const targetStage = stageList.find(s => s.name === opportunityForm.stage);
+
     if (convertingLeadId) {
-      completeLeadConversion(convertingLeadId, opportunityForm.stage);
+      try {
+        const res = await authRequest('/api/pipeline/move/', {
+          method: 'POST',
+          body: JSON.stringify({
+            entity_type: 'lead',
+            id: convertingLeadId,
+            target_stage_id: targetStage?.id,
+            opp_data: {
+              name: opportunityForm.dealName,
+              amount: amount,
+              expected_close_date: opportunityForm.closeDate,
+              description: opportunityForm.notes
+            }
+          })
+        });
+        if (isResponseSuccess(res)) {
+          fetchAllLeadsAndOpportunities();
+          setOpportunityModalOpen(false);
+          setConvertingLeadId(null);
+          setMessage('Lead successfully converted to Opportunity.');
+        }
+      } catch (err) {
+        setMessage(err.message || 'Failed to convert lead.');
+      }
+    } else if (editingOpportunityId) {
+      try {
+        const res = await authRequest(`/api/opportunities/${editingOpportunityId}/`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            name: opportunityForm.dealName,
+            amount: amount,
+            expected_close_date: opportunityForm.closeDate,
+            description: opportunityForm.notes,
+            assigned_salesperson: opportunityForm.owner ? Number(opportunityForm.owner) : null,
+            stage: targetStage ? mapStageNameToBackendStage(targetStage.name) : 'QUALIFICATION',
+            pipeline_stage: targetStage ? targetStage.id : null,
+          })
+        });
+        if (isResponseSuccess(res)) {
+          fetchAllLeadsAndOpportunities();
+          setOpportunityModalOpen(false);
+          setEditingOpportunityId(null);
+          setMessage('Opportunity updated successfully.');
+        }
+      } catch (err) {
+        setMessage(err.message || 'Failed to update opportunity.');
+      }
     }
-    setOpportunityModalOpen(false);
-    setConvertingLeadId(null);
-    setEditingOpportunityId(null);
-    setMessage(editingOpportunityId ? 'Opportunity updated successfully.' : 'Opportunity created successfully.');
   };
 
   const openEditStage = (stage) => {
     setEditingStage(stage);
-    setStageForm({ name: stage.name, owner: stage.owner === 'System' ? owners[1] : stage.owner });
+    setStageForm({ name: stage.name, owner: stage.owner || '' });
     setStageModalOpen(true);
   };
 
   const openCreateManagedStage = () => {
     setEditingStage(null);
-    setStageForm({ name: '', owner: owners.find((item) => item !== 'All') || 'Ali Raza' });
+    setStageForm({ name: '', owner: availableUsers[0]?.id || '' });
     setStageModalOpen(true);
   };
 
@@ -545,44 +603,58 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
     setRenamePipelineOpen(true);
   };
 
-  const savePipelineName = (event) => {
+  const savePipelineName = async (event) => {
     event.preventDefault();
     const name = pipelineNameDraft.trim();
     if (!name) {
       setMessage('Pipeline name is required.');
       return;
     }
-    setActivePipeline((current) => ({ ...current, name }));
-    if (activePipeline.type === 'custom') {
-      setSavedCustomPipeline((currentPipeline) => currentPipeline ? { ...currentPipeline, name } : currentPipeline);
-      setNewPipelineName(name);
+    try {
+      const res = await authRequest(`/api/pipelines/${activePipelineId}/`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name })
+      });
+      if (isResponseSuccess(res)) {
+        setActivePipeline((current) => ({ ...current, name }));
+        setRenamePipelineOpen(false);
+        setMessage('Pipeline name updated.');
+      }
+    } catch (err) {
+      setMessage(err.message || 'Failed to rename pipeline.');
     }
-    setRenamePipelineOpen(false);
-    setMessage('Pipeline name updated.');
   };
 
-  const setStageAsWon = (stage) => {
-    setStageList((current) => {
-      const nextStages = current.map((item) => (
-        item.id === stage.id ? { ...item, role: 'won' } : { ...item, role: item.role === 'won' ? undefined : item.role }
-      ));
-      if (activePipeline.type === 'custom') {
-        setSavedCustomPipeline((currentPipeline) => currentPipeline ? { ...currentPipeline, stages: nextStages } : currentPipeline);
+  const setStageAsWon = async (stage) => {
+    try {
+      const res = await authRequest(`/api/pipeline/stages/${stage.id}/`, {
+        method: 'PATCH',
+        body: JSON.stringify({ stage_type: 'WON' })
+      });
+      if (isResponseSuccess(res)) {
+        fetchStages(activePipelineId);
+        fetchAllLeadsAndOpportunities();
+        setMessage('Stage set as WON terminal successfully.');
       }
-      return nextStages;
-    });
+    } catch (err) {
+      setMessage(err.message || 'Failed to update stage type.');
+    }
   };
 
-  const setStageAsLost = (stage) => {
-    setStageList((current) => {
-      const nextStages = current.map((item) => (
-        item.id === stage.id ? { ...item, role: 'lost' } : { ...item, role: item.role === 'lost' ? undefined : item.role }
-      ));
-      if (activePipeline.type === 'custom') {
-        setSavedCustomPipeline((currentPipeline) => currentPipeline ? { ...currentPipeline, stages: nextStages } : currentPipeline);
+  const setStageAsLost = async (stage) => {
+    try {
+      const res = await authRequest(`/api/pipeline/stages/${stage.id}/`, {
+        method: 'PATCH',
+        body: JSON.stringify({ stage_type: 'LOST' })
+      });
+      if (isResponseSuccess(res)) {
+        fetchStages(activePipelineId);
+        fetchAllLeadsAndOpportunities();
+        setMessage('Stage set as LOST terminal successfully.');
       }
-      return nextStages;
-    });
+    } catch (err) {
+      setMessage(err.message || 'Failed to update stage type.');
+    }
   };
 
   const handleStageRowClick = (stage) => {
@@ -668,104 +740,375 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
     }
   };
 
-  const submitCustomDrop = (event) => {
+  const submitCustomDrop = async (event) => {
     event.preventDefault();
-    const missing = customFields
-      .filter((field) => field.required === 'Yes' && !String(customValues[field.id] || '').trim())
-      .map((field) => field.id);
+    const fields = customDrop.fields || [];
+    const missing = fields
+      .filter((field) => field.required && !String(customValues[field.label] || '').trim())
+      .map((field) => field.label);
     if (missing.length) {
       setCustomErrors(missing);
       return;
     }
-    const source = customDrop?.lead || customDrop?.item;
-    const nextOpportunityId = customDrop.type === 'lead' ? makeNextOpportunityId() : customDrop.item.id;
-    const dealName = source?.name || makeInitialDealName(source || {});
-    const amountField = customFields.find((field) => /amount|value|deal/i.test(field.label));
-    const closeDateField = customFields.find((field) => /close|date/i.test(field.label));
-    const amount = Number(customValues[amountField?.id] || source?.leadValue || source?.value || 0);
-    const closeDate = customValues[closeDateField?.id] || source?.expectedCloseDate || source?.closeDate || defaultOpportunityCloseDate();
-    setStageRecords((current) => [{
-      id: nextOpportunityId,
-      opportunityId: nextOpportunityId,
-      stage: customDrop.stageName,
-      date: new Date().toISOString().slice(0, 10),
-      dealName,
-      company: source?.company || '',
-      contact: source?.customer || source?.contact || '',
-      amount: amount ? formatCurrency(amount) : '',
-      closeDate,
-      owner: source?.owner || owners.find((item) => item !== 'All') || '',
-      description: source?.notes || '',
-      leadId: customDrop.type === 'lead' ? customDrop.lead.id : customDrop.item.leadId,
-      sourceName: dealName,
-      sourceId: source?.clientId || source?.id,
-      createdAt: new Date().toISOString().slice(0, 10),
-      values: customValues,
-    }, ...current]);
-    if (customDrop.type === 'lead') {
-      setOpportunities((current) => [{
-        id: nextOpportunityId,
-        name: dealName,
-        company: customDrop.lead.company || '',
-        contact: customDrop.lead.customer || '',
-        value: amount || Number(customDrop.lead.leadValue || 0),
-        priority: (amount || Number(customDrop.lead.leadValue || 0)) >= 800000 ? 'High' : (amount || Number(customDrop.lead.leadValue || 0)) >= 400000 ? 'Medium' : 'Low',
-        closeDate,
-        owner: customDrop.lead.owner && customDrop.lead.owner !== 'Not Assign' ? customDrop.lead.owner : owners.find((item) => item !== 'All') || '',
-        stage: customDrop.stageName,
-        product: 'CRM Suite',
-        notes: customDrop.lead.notes || '',
-        leadId: customDrop.lead.id,
-        customValues,
-      }, ...current]);
-      completeLeadConversion(customDrop.lead.id, customDrop.stageName);
-    } else {
-      setOpportunities((current) => current.map((item) => item.id === customDrop.item.id ? { ...item, stage: customDrop.stageName, customValues } : item));
-      syncLeadStatus(customDrop.item.leadId, customDrop.stageName);
+
+    const source = customDrop?.lead;
+    const dealName = makeInitialDealName(source || {});
+    // Find amount and close date in customValues or fall back
+    const amountVal = Number(customValues['Amount'] || customValues['Value'] || source?.leadValue || 0);
+    const closeDateVal = customValues['Expected Close Date'] || customValues['Close Date'] || defaultOpportunityCloseDate();
+
+    try {
+      const res = await authRequest('/api/pipeline/move/', {
+        method: 'POST',
+        body: JSON.stringify({
+          entity_type: 'lead',
+          id: source.backendId || source.id,
+          target_stage_id: customDrop.stageId,
+          opp_data: {
+            name: dealName,
+            amount: amountVal,
+            expected_close_date: closeDateVal,
+            description: source.notes || ""
+          },
+          custom_values: customValues
+        })
+      });
+      if (isResponseSuccess(res)) {
+        fetchAllLeadsAndOpportunities();
+        setMessage('Lead successfully converted to Opportunity.');
+      }
+    } catch (err) {
+      setMessage(err.message || 'Failed to convert lead.');
     }
+
     setCustomDrop(null);
     setDragged(null);
     setDraggedLead(null);
-    setDynamicStagePage(customDrop.stageName);
-    setMessage('Opportunity stage form saved successfully.');
   };
 
-  const confirmDeleteStage = () => {
-    setStageList((current) => {
-      const nextStages = current.filter((stage) => stage.id !== deleteStage.id);
-      if (activePipeline.type === 'custom') {
-        setSavedCustomPipeline((currentPipeline) => currentPipeline ? { ...currentPipeline, stages: nextStages } : currentPipeline);
+  const confirmDeleteStage = async () => {
+    try {
+      const res = await authRequest(`/api/pipeline/stages/${deleteStage.id}/`, {
+        method: 'DELETE'
+      });
+      fetchStages(activePipelineId);
+      fetchAllLeadsAndOpportunities();
+      setMessage('Stage deleted successfully.');
+      setDeleteStage(null);
+    } catch (err) {
+      if (err.message && err.message.includes("Please provide a reassign_stage_id")) {
+        setReassignModalOpen(true);
+      } else {
+        setMessage(err.message || 'Failed to delete stage. Ensure no active opportunities remain in it.');
+        setDeleteStage(null);
       }
-      return nextStages;
+    }
+  };
+
+  const confirmReassignDelete = async () => {
+    if (!reassignStageId) {
+      setMessage('Please select a target reassignment stage.');
+      return;
+    }
+    try {
+      await authRequest(`/api/pipeline/stages/${deleteStage.id}/`, {
+        method: 'DELETE',
+        body: JSON.stringify({ reassign_stage_id: Number(reassignStageId) })
+      });
+      fetchStages(activePipelineId);
+      fetchAllLeadsAndOpportunities();
+      setMessage('Cards successfully reassigned and stage deleted.');
+      setReassignModalOpen(false);
+      setDeleteStage(null);
+      setReassignStageId('');
+    } catch (err) {
+      setMessage(err.message || 'Failed to reassign cards and delete stage.');
+      setReassignModalOpen(false);
+      setDeleteStage(null);
+      setReassignStageId('');
+    }
+  };
+
+  const handleCardClick = async (type, record) => {
+    setActiveDrawerCard({ type, record });
+    setDrawerMode('view');
+    const stages = await fetchStages(record.pipeline || activePipelineId);
+    setDrawerStages(stages);
+    if (type === 'lead') {
+      setDrawerForm({
+        customer: record.customer || '',
+        company: record.company || '',
+        phone: record.phone || '',
+        email: record.email || '',
+        source: record.source || 'Website',
+        priority: record.priority || 'Medium',
+        pipeline: record.pipeline || activePipelineId,
+        pipeline_stage: record.pipeline_stage || '',
+        owner: record.owner || '',
+        notes: record.notes || '',
+      });
+    } else {
+      setDrawerForm({
+        dealName: record.name || '',
+        company: record.company || '',
+        contact: record.contact || '',
+        value: String(record.value || 0),
+        closeDate: record.closeDate || '',
+        stage: record.stage || '',
+        pipeline: record.pipeline || activePipelineId,
+        pipeline_stage: record.pipeline_stage || '',
+        owner: record.owner || '',
+        notes: record.notes || '',
+        lost_reason: record.notes || '',
+      });
+    }
+  };
+
+  const fetchDrawerStages = async (pipelineId) => {
+    try {
+      const res = await apiGet(`/api/pipeline/stages/?pipeline=${pipelineId}`);
+      const data = getResponseList(res);
+      if (data) {
+        const mapped = data.map((stage) => ({
+          id: stage.id,
+          name: normalizeLabel(stage.name),
+          stage_type: stage.stage_type,
+          entity_type: stage.entity_type,
+          order: stage.order,
+        }));
+        mapped.sort((a, b) => a.order - b.order);
+        return mapped;
+      }
+    } catch (err) {
+      console.error(err);
+    }
+    return [];
+  };
+
+  const saveLeadDrawer = async (event) => {
+    event.preventDefault();
+    if (!drawerForm.customer.trim() || !drawerForm.phone.trim()) {
+      setMessage('Full Name and Phone Number are required.');
+      return;
+    }
+    const lead = activeDrawerCard.record;
+    const targetStage = drawerStages.find(s => s.id === drawerForm.pipeline_stage);
+
+    if (targetStage && targetStage.stage_type === 'CONVERSION') {
+      setActiveDrawerCard(null);
+      setDrawerMode(null);
+      openConversionModal(lead, targetStage.id);
+      return;
+    }
+
+    try {
+      const res = await authRequest(`/api/leads/${lead.backendId || lead.id}/`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          full_name: drawerForm.customer.trim(),
+          company_name: drawerForm.company.trim(),
+          phone: drawerForm.phone.trim(),
+          email: drawerForm.email.trim() || null,
+          source: drawerForm.source ? drawerForm.source.toUpperCase().replace(/\s+/g, '_') : 'WEBSITE',
+          priority: drawerForm.priority ? drawerForm.priority.toUpperCase() : 'MEDIUM',
+          notes: drawerForm.notes,
+          pipeline: drawerForm.pipeline,
+          pipeline_stage: drawerForm.pipeline_stage,
+        })
+      });
+      if (isResponseSuccess(res)) {
+        if (drawerForm.owner !== lead.owner) {
+          await authRequest(`/api/leads/${lead.backendId || lead.id}/assign/`, {
+            method: 'POST',
+            body: JSON.stringify({
+              assigned_salesperson: drawerForm.owner ? Number(drawerForm.owner) : null
+            })
+          });
+        }
+        fetchAllLeadsAndOpportunities();
+        setActiveDrawerCard(null);
+        setDrawerMode(null);
+        setMessage('Lead details updated successfully.');
+      }
+    } catch (err) {
+      setMessage(err.message || 'Failed to save lead details.');
+    }
+  };
+
+  const saveOpportunityDrawer = async (event) => {
+    event.preventDefault();
+    const amount = Number(drawerForm.value);
+    if (!drawerForm.dealName.trim()) {
+      setMessage('Opportunity Name is required.');
+      return;
+    }
+    if (Number.isNaN(amount) || amount < 0) {
+      setMessage('Deal Amount must be a positive number.');
+      return;
+    }
+    if (!drawerForm.closeDate) {
+      setMessage('Expected Close Date is required.');
+      return;
+    }
+    if (!drawerForm.pipeline_stage) {
+      setMessage('Stage is required.');
+      return;
+    }
+    const opp = activeDrawerCard.record;
+    const targetStage = drawerStages.find(s => s.id === drawerForm.pipeline_stage);
+    const isLost = targetStage?.stage_type === 'LOST';
+
+
+    try {
+      const res = await authRequest(`/api/opportunities/${opp.backendId || opp.id}/`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          name: drawerForm.dealName.trim(),
+          amount: amount,
+          expected_close_date: drawerForm.closeDate,
+          description: drawerForm.notes,
+          assigned_salesperson: drawerForm.owner ? Number(drawerForm.owner) : null,
+          stage: targetStage ? mapStageNameToBackendStage(targetStage.name) : 'QUALIFICATION',
+          pipeline: drawerForm.pipeline,
+          pipeline_stage: drawerForm.pipeline_stage,
+          lost_reason: isLost ? drawerForm.lost_reason.trim() : '',
+        })
+      });
+      if (isResponseSuccess(res)) {
+        fetchAllLeadsAndOpportunities();
+        setActiveDrawerCard(null);
+        setDrawerMode(null);
+        setMessage('Opportunity updated successfully.');
+      }
+    } catch (err) {
+      setMessage(err.message || 'Failed to save opportunity details.');
+    }
+  };
+
+  const openConversionModal = async (lead, stageId) => {
+    const initialName = makeInitialDealName(lead);
+    const initialNotes = lead.notes || '';
+    const initialAmount = lead.leadValue ? String(lead.leadValue) : '0.00';
+    const initialCloseDate = lead.nextFollowUp || lead.expectedCloseDate || defaultOpportunityCloseDate();
+
+    setOpportunityForm({
+      dealName: initialName,
+      company: lead.company || '',
+      contact: lead.customer || '',
+      value: initialAmount,
+      closeDate: initialCloseDate,
+      stage: stageList.find(s => s.id === stageId)?.name || '',
+      owner: lead.owner || '',
+      notes: initialNotes,
     });
-    setMessage('Stage deleted successfully.');
-    setDeleteStage(null);
+
+    setConvertingLeadId(lead.backendId || lead.id);
+    setConvertingLeadStageId(stageId);
+
+    try {
+      const formRes = await apiGet(`/api/pipelines/${activePipelineId}/form/`);
+      const formData = getResponseObject(formRes);
+      if (formData && formData.is_active && formData.fields && formData.fields.length > 0) {
+        setCustomFields(formData.fields.sort((a, b) => a.order - b.order));
+        setIsCustomFormActive(true);
+        setCustomValues(formData.fields.reduce((values, field) => ({ ...values, [field.label]: '' }), {}));
+      } else {
+        setCustomFields([]);
+        setIsCustomFormActive(false);
+      }
+    } catch (err) {
+      console.log("No custom form configuration found, converting using standard form fields.");
+      setCustomFields([]);
+      setIsCustomFormActive(false);
+    }
+
+    setConversionModalOpen(true);
+  };
+
+  const submitConversion = async (event) => {
+    event.preventDefault();
+    const amount = Number(opportunityForm.value);
+    if (!opportunityForm.dealName.trim()) {
+      setMessage('Deal Name is required.');
+      return;
+    }
+    if (Number.isNaN(amount) || amount < 0) {
+      setMessage('Deal Amount must be a positive number.');
+      return;
+    }
+    if (!opportunityForm.closeDate) {
+      setMessage('Expected Close Date is required.');
+      return;
+    }
+
+    if (isCustomFormActive && customFields.length > 0) {
+      const missing = customFields
+        .filter((field) => field.required && !String(customValues[field.label] || '').trim())
+        .map((field) => field.label);
+      if (missing.length) {
+        setCustomErrors(missing);
+        setMessage(`Missing required custom fields: ${missing.join(', ')}`);
+        return;
+      }
+    }
+
+    try {
+      const targetStage = stageList.find(s => s.name === opportunityForm.stage) || stageList.find(s => s.id === convertingLeadStageId);
+      const res = await authRequest('/api/pipeline/move/', {
+        method: 'POST',
+        body: JSON.stringify({
+          entity_type: 'lead',
+          id: convertingLeadId,
+          target_stage_id: targetStage?.id || convertingLeadStageId,
+          opp_data: {
+            name: opportunityForm.dealName.trim(),
+            amount: amount,
+            expected_close_date: opportunityForm.closeDate,
+            description: opportunityForm.notes
+          },
+          custom_values: isCustomFormActive ? customValues : {}
+        })
+      });
+      if (isResponseSuccess(res)) {
+        fetchAllLeadsAndOpportunities();
+        setConversionModalOpen(false);
+        setConvertingLeadId(null);
+        setConvertingLeadStageId(null);
+        setMessage('Lead successfully converted to Opportunity.');
+      }
+    } catch (err) {
+      setMessage(err.message || 'Failed to convert lead.');
+    }
   };
 
   const confirmMove = () => {
-    const movedOpportunity = opportunities.find((item) => item.id === pendingMove.id);
-    setOpportunities((current) => current.map((item) => item.id === pendingMove.id ? { ...item, stage: pendingMove.to } : item));
-    syncLeadStatus(movedOpportunity?.leadId, pendingMove.to);
-    setMessage('Opportunity stage updated successfully.');
     setPendingMove(null);
     setDragged(null);
   };
-  const moveStage = (targetStageId) => {
+
+  const moveStage = async (targetStageId) => {
     if (!draggedStageId || draggedStageId === targetStageId) return;
-    setStageList((current) => {
-      const fromIndex = current.findIndex((stage) => stage.id === draggedStageId);
-      const toIndex = current.findIndex((stage) => stage.id === targetStageId);
-      if (fromIndex < 0 || toIndex < 0) return current;
-      const next = [...current];
-      const [moved] = next.splice(fromIndex, 1);
-      next.splice(toIndex, 0, moved);
-      if (activePipeline.type === 'custom') {
-        setSavedCustomPipeline((currentPipeline) => currentPipeline ? { ...currentPipeline, stages: next } : currentPipeline);
-      }
-      return next;
-    });
+    const fromIndex = stageList.findIndex((stage) => stage.id === draggedStageId);
+    const toIndex = stageList.findIndex((stage) => stage.id === targetStageId);
+    if (fromIndex < 0 || toIndex < 0) return;
+    const next = [...stageList];
+    const [moved] = next.splice(fromIndex, 1);
+    next.splice(toIndex, 0, moved);
+    setStageList(next);
     setDraggedStageId(null);
-    setMessage('Pipeline stage order updated.');
+    try {
+      await Promise.all(next.map((stage, index) =>
+        authRequest(`/api/pipeline/stages/${stage.id}/`, {
+          method: 'PATCH',
+          body: JSON.stringify({ order: index }),
+        })
+      ));
+      setMessage('Pipeline stage order updated.');
+      fetchStages(activePipelineId);
+      fetchAllLeadsAndOpportunities();
+    } catch (err) {
+      setMessage(err.message || 'Failed to update pipeline stage order.');
+    }
   };
 
   const openPipelineSettings = () => {
@@ -773,42 +1116,46 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
     setPipelineSettingsOpen(true);
   };
 
-  const chooseStandardPipeline = () => {
-    setActivePipeline({ type: 'standard', name: 'Standard Pipeline' });
-    setStageList(makeStandardStageList());
-    setFilters((current) => ({ ...current, stage: 'All' }));
-    setPipelineSettingsOpen(false);
-    setPipelineSettingsStep('choose');
-    setMessage('Standard Pipeline selected.');
+  const chooseStandardPipeline = async () => {
+    try {
+      const res = await apiGet('/api/pipelines/');
+      const data = getResponseList(res);
+      if (data) {
+        setPipelinesList(data);
+        const def = data.find(p => p.is_default) || data[0];
+        if (def) {
+          setActivePipelineId(def.id);
+          setActivePipeline({ type: 'standard', name: def.name });
+          setFilters((current) => ({ ...current, stage: 'All' }));
+          setPipelineSettingsOpen(false);
+          setMessage('Standard Pipeline selected.');
+        }
+      }
+    } catch (err) {
+      setMessage(err.message || 'Failed to load Standard Pipeline.');
+    }
   };
 
   const startNewPipeline = () => {
-    if (savedCustomPipeline) {
-      setActivePipeline({ type: 'custom', name: savedCustomPipeline.name });
-      setStageList(savedCustomPipeline.stages);
-      setNewPipelineName(savedCustomPipeline.name);
-      setNewPipelineStages(savedCustomPipeline.stages);
-      setFilters((current) => ({ ...current, stage: 'All' }));
-      setPipelineSettingsOpen(false);
-      setPipelineSettingsStep('choose');
-      setMessage(`${savedCustomPipeline.name} pipeline selected.`);
-      return;
-    }
+    setIsCreatingNewPipeline(true);
     setNewPipelineName('');
-    setNewPipelineStages([{ id: `custom-${Date.now()}-1`, name: '' }]);
+    setNewPipelineStages([{ id: `custom-${Date.now()}-1`, name: '', color: '#6c757d' }]);
     setPipelineSettingsStep('name');
   };
 
-  const deleteSavedCustomPipeline = () => {
-    setSavedCustomPipeline(null);
-    setNewPipelineName('');
-    setNewPipelineStages([{ id: `custom-${Date.now()}-1`, name: '' }]);
-    if (activePipeline.type === 'custom') {
-      setActivePipeline({ type: 'standard', name: 'Standard Pipeline' });
-      setStageList(makeStandardStageList());
+  const deleteSavedCustomPipeline = async () => {
+    if (!activePipelineId) return;
+    if (activePipeline.type === 'standard') {
+      setMessage('Standard Pipeline cannot be deleted.');
+      return;
     }
-    setPipelineSettingsStep('name');
-    setMessage('Previous custom pipeline deleted. Create a new pipeline.');
+    try {
+      await authRequest(`/api/pipelines/${activePipelineId}/`, { method: 'DELETE' });
+      chooseStandardPipeline();
+      setMessage('Custom pipeline deleted successfully.');
+    } catch (err) {
+      setMessage(err.message || 'Failed to delete custom pipeline.');
+    }
   };
 
   const continueNewPipeline = () => {
@@ -816,13 +1163,13 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
       setMessage('Pipeline name is required.');
       return;
     }
-    setPipelineSettingsStep('stages');
+    setPipelineSettingsStep('wizard-stages');
   };
 
   const addNewPipelineStage = () => {
     setNewPipelineStages((current) => [
       ...current,
-      { id: `custom-${Date.now()}-${current.length + 1}`, name: '' },
+      { id: `custom-${Date.now()}-${current.length + 1}`, name: '', color: '#6c757d' },
     ]);
   };
 
@@ -833,559 +1180,475 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
   };
 
   const removeNewPipelineStage = (id) => {
-    setNewPipelineStages((current) => current.filter((stage) => stage.id !== id));
+    setNewPipelineStages((current) => {
+      const idx = current.findIndex((stage) => stage.id === id);
+      if (idx !== -1) {
+        setWizardConversionStageIdx((prev) => {
+          if (prev === idx) return null;
+          if (prev > idx) return prev - 1;
+          return prev;
+        });
+        setWizardWonStageIdx((prev) => {
+          if (prev === idx) return null;
+          if (prev > idx) return prev - 1;
+          return prev;
+        });
+        setWizardLostStageIdx((prev) => {
+          if (prev === idx) return null;
+          if (prev > idx) return prev - 1;
+          return prev;
+        });
+      }
+      return current.filter((stage) => stage.id !== id);
+    });
   };
 
-  const createCustomPipeline = () => {
-    const validStages = newPipelineStages
-      .map((stage) => ({ ...stage, name: stage.name.trim() }))
-      .filter((stage) => stage.name);
+  const updateNewPipelineStageColor = (id, color) => {
+    setNewPipelineStages((current) => current.map((stage) => (
+      stage.id === id ? { ...stage, color } : stage
+    )));
+  };
 
-    if (!validStages.length) {
-      setMessage('Create at least one pipeline stage.');
+  const moveNewPipelineStageIndex = (fromIndex, toIndex) => {
+    setNewPipelineStages((current) => {
+      const next = [...current];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+
+      // Adjust anchor indexes if shifted!
+      if (wizardConversionStageIdx === fromIndex) setWizardConversionStageIdx(toIndex);
+      else if (wizardConversionStageIdx === toIndex) setWizardConversionStageIdx(fromIndex);
+
+      if (wizardWonStageIdx === fromIndex) setWizardWonStageIdx(toIndex);
+      else if (wizardWonStageIdx === toIndex) setWizardWonStageIdx(fromIndex);
+
+      if (wizardLostStageIdx === fromIndex) setWizardLostStageIdx(toIndex);
+      else if (wizardLostStageIdx === toIndex) setWizardLostStageIdx(fromIndex);
+
+      return next;
+    });
+  };
+
+  const validateWizardStep2 = () => {
+    if (newPipelineStages.length < 2) {
+      return "The pipeline must have at least 2 stages.";
+    }
+    const emptyStage = newPipelineStages.find(s => !s.name || !s.name.trim());
+    if (emptyStage) {
+      return "Stage names cannot be empty.";
+    }
+    if (wizardConversionStageIdx === null || wizardConversionStageIdx === '') {
+      return "Please select a conversion stage.";
+    }
+    const convIdx = parseInt(wizardConversionStageIdx);
+    if (convIdx === 0) {
+      return "The conversion stage cannot be the first stage. There must be at least one Lead stage.";
+    }
+
+    if (wizardHasWon) {
+      if (wizardWonStageIdx === null || wizardWonStageIdx === '') {
+        return "Please select a Won stage.";
+      }
+      const wonIdx = parseInt(wizardWonStageIdx);
+      if (wonIdx < convIdx) {
+        return "The Won stage cannot be before the Conversion stage.";
+      }
+    }
+
+    if (wizardHasLost) {
+      if (wizardLostStageIdx === null || wizardLostStageIdx === '') {
+        return "Please select a Lost stage.";
+      }
+      const lostIdx = parseInt(wizardLostStageIdx);
+      if (lostIdx < convIdx) {
+        return "The Lost stage cannot be before the Conversion stage.";
+      }
+    }
+
+    if (wizardHasWon && wizardHasLost && parseInt(wizardWonStageIdx) === parseInt(wizardLostStageIdx)) {
+      return "The Won and Lost stages cannot be the same stage.";
+    }
+
+    return null;
+  };
+
+  const openSetupWizard = async () => {
+    if (!activePipelineId) return;
+    setIsCreatingNewPipeline(false);
+    setNewPipelineStages(stageList.map(s => ({
+      id: s.id,
+      name: s.name,
+      color: s.color || '#6c757d',
+      stage_type: s.stage_type,
+      entity_type: s.entity_type,
+      order: s.order
+    })));
+    setOriginalStages(JSON.parse(JSON.stringify(stageList)));
+
+    let convIdx = null;
+    let wonIdx = null;
+    let lostIdx = null;
+    stageList.forEach((s, idx) => {
+      if (s.stage_type === 'CONVERSION') convIdx = idx;
+      else if (s.stage_type === 'WON') wonIdx = idx;
+      else if (s.stage_type === 'LOST') lostIdx = idx;
+    });
+
+    if (convIdx === null && stageList.length > 1) {
+      convIdx = 1;
+    }
+
+    setWizardConversionStageIdx(convIdx);
+    setWizardHasWon(wonIdx !== null);
+    setWizardWonStageIdx(wonIdx);
+    setWizardHasLost(lostIdx !== null);
+    setWizardLostStageIdx(lostIdx);
+
+    let formActive = false;
+    let fieldsList = [];
+    try {
+      const formRes = await apiGet(`/api/pipelines/${activePipelineId}/form/`);
+      const formData = getResponseObject(formRes);
+      if (formData) {
+        formActive = Boolean(formData.is_active);
+        fieldsList = formData.fields || [];
+      }
+    } catch (err) {
+      console.log("No custom form configured yet, starting empty.");
+    }
+
+    setWizardEnableForm(formActive);
+    setWizardFormFields(fieldsList);
+
+    setPipelineSettingsStep('wizard-stages');
+    setPipelineSettingsOpen(true);
+  };
+
+  const saveGuidedSetupWizard = async () => {
+    if (wizardSaving) return;
+    const err = validateWizardStep2();
+    if (err) {
+      setMessage(err);
       return;
     }
 
-    const duplicateStage = validStages.find((stage, index) => (
-      validStages.findIndex((item) => item.name.toLowerCase() === stage.name.toLowerCase()) !== index
-    ));
-    if (duplicateStage) {
-      setMessage('Stage names must be unique.');
-      return;
-    }
-
-    const customPipeline = {
-      name: newPipelineName.trim(),
-      stages: validStages.map((stage) => ({ ...stage, owner: owners.find((item) => item !== 'All') || 'Ali Raza' })),
+    setWizardSaving(true);
+    setWizardSaveLogs([]);
+    const logMsg = (msg) => {
+      setWizardSaveLogs((current) => [...current, `> ${msg}`]);
     };
-    setSavedCustomPipeline(customPipeline);
-    setStageList(customPipeline.stages);
-    setActivePipeline({ type: 'custom', name: customPipeline.name });
-    setFilters((current) => ({ ...current, stage: 'All' }));
-    setPipelineSettingsOpen(false);
-    setPipelineSettingsStep('choose');
-    setMessage(`${newPipelineName.trim()} pipeline created successfully.`);
+
+    logMsg("Starting configuration save...");
+
+    try {
+      let pipelineId = isCreatingNewPipeline ? null : activePipelineId;
+      if (!pipelineId) {
+        logMsg("Creating custom pipeline record...");
+        const res = await authRequest('/api/pipelines/', {
+          method: 'POST',
+          body: JSON.stringify({ name: newPipelineName.trim() })
+        });
+        const data = getResponseObject(res);
+        if (data && data.id) {
+          pipelineId = data.id;
+          setActivePipelineId(pipelineId);
+          setActivePipeline({ type: 'custom', name: newPipelineName.trim() });
+        } else {
+          throw new Error('Failed to create pipeline record on backend.');
+        }
+      }
+
+      logMsg("Saving stages configuration...");
+      const savedStages = [];
+      for (let i = 0; i < newPipelineStages.length; i++) {
+        const ws = newPipelineStages[i];
+        const payload = {
+          pipeline: pipelineId,
+          name: ws.name.trim(),
+          order: i,
+          color: ws.color || "#6c757d"
+        };
+
+        logMsg(`Saving stage: "${ws.name}" (Position: ${i + 1})...`);
+        let res;
+        const isExisting = ws.id && typeof ws.id === 'number';
+        if (isExisting) {
+          res = await authRequest(`/api/pipeline/stages/${ws.id}/`, {
+            method: 'PATCH',
+            body: JSON.stringify(payload)
+          });
+        } else {
+          res = await authRequest('/api/pipeline/stages/', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+          });
+        }
+        const saved = getResponseObject(res);
+        savedStages.push(saved);
+      }
+      logMsg("Stages configuration saved successfully.");
+
+      const activeIds = savedStages.map(s => s.id);
+      const deletedStages = originalStages.filter(os => !activeIds.includes(os.id));
+
+      if (deletedStages.length > 0) {
+        logMsg(`Processing deletions for ${deletedStages.length} removed stage(s)...`);
+        for (const ds of deletedStages) {
+          logMsg(`Soft deleting stage: "${ds.name}"...`);
+          try {
+            await authRequest(`/api/pipeline/stages/${ds.id}/`, {
+              method: 'DELETE'
+            });
+          } catch (e) {
+            if (e.message && e.message.includes("Please provide a reassign_stage_id")) {
+              logMsg(`Stage "${ds.name}" contains active cards. Demanding reassignment.`);
+              const promptMsg = `Stage "${ds.name}" contains active cards. Please enter the number (Position) of the target stage to reassign them to (1 to ${savedStages.length}):\n` +
+                                savedStages.map((s, idx) => `[${idx+1}] ${s.name}`).join('\n');
+              const targetIdx = window.prompt(promptMsg);
+              const targetNum = parseInt(targetIdx);
+              if (!isNaN(targetNum) && targetNum >= 1 && targetNum <= savedStages.length) {
+                const reassignId = savedStages[targetNum - 1].id;
+                logMsg(`Reassigning cards to "${savedStages[targetNum - 1].name}" and retrying deletion...`);
+                await authRequest(`/api/pipeline/stages/${ds.id}/`, {
+                  method: 'DELETE',
+                  body: JSON.stringify({ reassign_stage_id: reassignId })
+                });
+              } else {
+                throw new Error(`Deletion of stage "${ds.name}" cancelled or invalid reassign stage selected.`);
+              }
+            } else {
+              throw e;
+            }
+          }
+        }
+        logMsg("Omitted stages deleted successfully.");
+      }
+
+      logMsg("Refreshing stage IDs for behavior role mapping...");
+      const refreshRes = await apiGet(`/api/pipeline/stages/?pipeline=${pipelineId}`);
+      const freshStages = getResponseList(refreshRes);
+      freshStages.sort((a, b) => a.order - b.order);
+
+      const convStageObj = freshStages[parseInt(wizardConversionStageIdx)];
+      const wonStageObj = (wizardHasWon && wizardWonStageIdx !== null) ? freshStages[parseInt(wizardWonStageIdx)] : null;
+      const lostStageObj = (wizardHasLost && wizardLostStageIdx !== null) ? freshStages[parseInt(wizardLostStageIdx)] : null;
+
+      if (!convStageObj) {
+        throw new Error("Could not resolve conversion stage database record.");
+      }
+
+      logMsg(`Mapping boundary conversion stage to: "${convStageObj.name}"...`);
+      if (wonStageObj) logMsg(`Mapping Won stage to: "${wonStageObj.name}"...`);
+      if (lostStageObj) logMsg(`Mapping Lost stage to: "${lostStageObj.name}"...`);
+
+      logMsg("Updating pipeline behavior configuration...");
+      await authRequest(`/api/pipelines/${pipelineId}/configure_behavior/`, {
+        method: 'POST',
+        body: JSON.stringify({
+          conversion_stage_id: convStageObj.id,
+          won_stage_id: wonStageObj ? wonStageObj.id : null,
+          lost_stage_id: lostStageObj ? lostStageObj.id : null
+        })
+      });
+      logMsg("Pipeline behavior configuration updated successfully.");
+
+      logMsg("Saving Opportunity Custom Form Template...");
+      await authRequest(`/api/pipelines/${pipelineId}/form/`, {
+        method: 'POST',
+        body: JSON.stringify({
+          is_active: wizardEnableForm,
+          fields: wizardFormFields.map((field, index) => ({
+            ...field,
+            order: index
+          }))
+        })
+      });
+      logMsg("Opportunity Custom Form Template saved successfully.");
+
+      logMsg("--- PIPELINE SETUP COMPLETE! ---");
+      await fetchPipelines();
+      setActivePipelineId(pipelineId);
+      const isDefault = (pipelineId === 1);
+      const targetName = isCreatingNewPipeline ? newPipelineName.trim() : activePipeline.name;
+      setActivePipeline({ type: isDefault ? 'standard' : 'custom', name: targetName });
+      setFilters((current) => ({ ...current, stage: 'All' }));
+      setPipelineSettingsOpen(false);
+      setMessage(`Pipeline configured successfully!`);
+    } catch (err) {
+      console.error(err);
+      logMsg(`ERROR: ${err.message}`);
+      setMessage(err.message || 'Failed to save pipeline configuration.');
+    } finally {
+      setWizardSaving(false);
+    }
   };
 
-  if (activeStagePage && opportunityStage) {
-    const customStageColumns = customFields.map((field) => [field.id, field.label]);
-    const dynamicStageColumns = opportunityStageMode === 'custom' && customFields.length
-      ? [
-        ['opportunityId', 'Opportunity ID', 'link-cell'],
-        ['date', 'Date'],
-        ['dealName', 'Deal Name'],
-        ...customStageColumns,
-        ['stage', 'Stage'],
-        ['owner', 'Assigned Salesperson'],
-      ]
-      : opportunityStageColumns;
-    const dynamicStageFormFields = opportunityStageMode === 'custom' && customFields.length
-      ? [
-        { key: 'dealName', label: 'Deal Name' },
-        ...customFields.map((field) => ({
-          key: field.id,
-          label: field.label,
-          type: getCustomFieldInputType(normalizeCustomFieldType(field.type)),
-        })),
-        { key: 'stage', label: 'Stage', kind: 'select', options: stageList.map((stage) => stage.name) },
-        { key: 'owner', label: 'Assigned Salesperson', kind: 'select', options: owners.filter((item) => item !== 'All') },
-      ]
-      : opportunityStageFormFields;
-    const dynamicStageDetailFields = opportunityStageMode === 'custom' && customFields.length
-      ? [
-        { key: 'opportunityId', label: 'Opportunity ID' },
-        { key: 'dealName', label: 'Deal Name' },
-        ...customFields.map((field) => ({ key: field.id, label: field.label })),
-        { key: 'stage', label: 'Stage' },
-        { key: 'owner', label: 'Assigned Salesperson' },
-      ]
-      : opportunityStageDetailFields;
-    const pageRecords = stageRecords
-      .filter((record) => record.stage === activeStagePage)
-      .map((record) => ({
-        ...record,
-        ...(record.values || {}),
-        contactId: record.opportunityId || record.id,
-        id: record.opportunityId || record.id,
-        date: record.date || record.createdAt,
-        amount: record.amount || formatCurrency(record.values?.value || 0),
-        dealName: record.dealName || record.values?.dealName || record.sourceName || 'Opportunity',
-        company: record.company || record.values?.company || '',
-        contact: record.contact || record.values?.contact || '',
-        closeDate: record.closeDate || record.values?.closeDate || '',
-        owner: record.owner || record.values?.owner || '',
-        description: record.description || record.values?.description || '',
-      }));
+  const addNewWizardFormField = () => {
+    const label = newFieldDraft.label.trim();
+    if (!label) {
+      setMessage("Field Label Name is required.");
+      return;
+    }
+    const type = newFieldDraft.type;
+    let opts = [];
+    if (type === 'DROPDOWN') {
+      opts = newFieldDraft.options.split(',').map(x => x.trim()).filter(x => x !== '');
+      if (opts.length === 0) {
+        setMessage("Dropdown field must have at least one option.");
+        return;
+      }
+    }
+    const req = newFieldDraft.required;
 
-    return (
-      <div className="crm-legacy-page">
-        <ContactsPage
-          contacts={pageRecords}
-          setContacts={(updater) => {
-            const nextRows = typeof updater === 'function' ? updater(pageRecords) : updater;
-            const nextIds = new Set(nextRows.map((row) => row.id));
-            const normalized = nextRows.map((row) => ({
-              ...row,
-              opportunityId: row.opportunityId || row.id,
-              stage: row.stage || activeStagePage,
-              createdAt: row.createdAt || row.date || new Date().toISOString().slice(0, 10),
-              values: {
-                ...(row.values || {}),
-                ...Object.fromEntries(customFields.map((field) => [field.id, row[field.id] ?? row.values?.[field.id] ?? ''])),
-                dealName: row.dealName || row.sourceName || '',
-                company: row.company || '',
-                contact: row.contact || '',
-                value: Number(String(row.amount || '').replace(/[^0-9.-]/g, '')) || 0,
-                closeDate: row.closeDate || '',
-                owner: row.owner || '',
-                description: row.description || '',
-              },
-            }));
+    setWizardFormFields((current) => [
+      ...current,
+      {
+        label,
+        field_type: type,
+        required: req,
+        options: opts
+      }
+    ]);
 
-            setStageRecords((current) => {
-              const untouched = current.filter((record) => record.stage !== activeStagePage);
-              return [...normalized, ...untouched].filter((record) => record.stage !== activeStagePage || nextIds.has(record.id));
-            });
+    setNewFieldDraft({ label: '', type: 'TEXT', required: false, options: '' });
+  };
 
-            setOpportunities((current) => {
-              const rowsById = new Map(normalized.map((row) => [row.opportunityId || row.id, row]));
-              const currentIds = new Set(current.map((opportunity) => opportunity.id));
-              const updated = current.map((opportunity) => {
-                const row = rowsById.get(opportunity.id);
-                if (!row) return opportunity;
-                const amount = Number(String(row.amount || '').replace(/[^0-9.-]/g, '')) || 0;
-                return {
-                  ...opportunity,
-                  name: row.dealName || opportunity.name,
-                  company: row.company || opportunity.company,
-                  contact: row.contact || opportunity.contact,
-                  value: amount,
-                  priority: amount >= 800000 ? 'High' : amount >= 400000 ? 'Medium' : 'Low',
-                  closeDate: row.closeDate || opportunity.closeDate,
-                  stage: row.stage || opportunity.stage,
-                  owner: row.owner || opportunity.owner,
-                  notes: row.description || opportunity.notes,
-                };
-              });
-              const additions = normalized
-                .filter((row) => !currentIds.has(row.opportunityId || row.id))
-                .map((row) => {
-                  const amount = Number(String(row.amount || '').replace(/[^0-9.-]/g, '')) || 0;
-                  return {
-                    id: row.opportunityId || row.id,
-                    name: row.dealName || 'Opportunity',
-                    company: row.company || '',
-                    contact: row.contact || '',
-                    value: amount,
-                    priority: amount >= 800000 ? 'High' : amount >= 400000 ? 'Medium' : 'Low',
-                    closeDate: row.closeDate || '',
-                    owner: row.owner || owners.find((item) => item !== 'All') || '',
-                    stage: row.stage || activeStagePage,
-                    product: 'CRM Suite',
-                    notes: row.description || '',
-                    leadId: row.leadId,
-                  };
-                });
-              return [...additions, ...updated];
-            });
+  const removeWizardFormField = (index) => {
+    setWizardFormFields((current) => current.filter((_, idx) => idx !== index));
+  };
 
-            normalized.forEach((row) => syncLeadStatus(row.leadId, row.stage || activeStagePage));
-          }}
-          setMessage={setMessage}
-          pageClassName="companies-copy-page opportunity-stage-records-page"
-          tableColumns={dynamicStageColumns}
-          showSerialColumn
-          addButtonLabel="New Opportunity"
-          blankFormValue={{
-            dealName: '',
-            company: '',
-            contact: '',
-            amount: '',
-            closeDate: '',
-            stage: activeStagePage,
-            owner: owners.find((item) => item !== 'All') || 'Ali Raza',
-            description: '',
-          }}
-          formFields={dynamicStageFormFields}
-          formSectionTitle="Opportunity Information"
-          addFormTitle={`Add ${activeStagePage} Opportunity`}
-          addFormDescription="Create a record for this opportunity stage."
-          editFormTitle="Edit Opportunity"
-          editFormDescription="Update this opportunity stage record."
-          saveButtonLabel="Save Opportunity"
-          updateButtonLabel="Save Changes"
-          idPrefix="OP"
-          allowManualId={false}
-          formPageClassName="company-form-page"
-          detailTitle="Opportunity Detail"
-          detailAriaLabel="Opportunity details"
-          detailFields={dynamicStageDetailFields}
-          showActivitySections={false}
-          filterConfig={[
-            { key: 'stage', label: 'Stage', options: ['All', activeStagePage] },
-            { key: 'owner', label: 'Owner', options: owners },
-            { key: 'dateRange', label: 'Date range', type: 'dateRange', options: ['All', 'Today', 'Last 7 Days', 'This Month', 'Custom Range'], defaultValue: 'All' },
-          ]}
-          filterTopContent={<OpportunityStageSummaryStrip records={pageRecords} stageName={activeStagePage} />}
-          customDetailRenderer={(props) => <OpportunityStageDetailPage {...props} stageName={activeStagePage} />}
-          useFallbackRows={false}
-        />
-      </div>
-    );
-  }
+  const createStage = async (event) => {
+    event.preventDefault();
+    const name = stageForm.name.trim();
+    if (!name) {
+      setMessage('Stage Name is required.');
+      return;
+    }
+    if (editingStage) {
+      try {
+        const res = await authRequest(`/api/pipeline/stages/${editingStage.id}/`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            pipeline: activePipelineId,
+            name,
+            entity_type: editingStage.entity_type || 'OPPORTUNITY',
+            stage_type: editingStage.stage_type || 'NORMAL_OPPORTUNITY',
+            order: editingStage.order
+          })
+        });
+        if (isResponseSuccess(res)) {
+          fetchStages(activePipelineId);
+          fetchAllLeadsAndOpportunities();
+          setMessage('Stage updated successfully.');
+        }
+      } catch (err) {
+        setMessage(err.message || 'Failed to update stage.');
+      }
+    } else {
+      try {
+        const res = await authRequest('/api/pipeline/stages/', {
+          method: 'POST',
+          body: JSON.stringify({
+            pipeline: activePipelineId,
+            name,
+            entity_type: 'OPPORTUNITY',
+            stage_type: 'NORMAL_OPPORTUNITY'
+          })
+        });
+        if (isResponseSuccess(res)) {
+          fetchStages(activePipelineId);
+          fetchAllLeadsAndOpportunities();
+          setMessage('Stage created successfully.');
+        }
+      } catch (err) {
+        setMessage(err.message || 'Failed to create stage.');
+      }
+    }
+    setStageForm({ name: '', owner: '' });
+    setStageModalOpen(false);
+    setEditingStage(null);
+  };
 
-  return (
-    <div className="crm-legacy-page">
-      <CompaniesPage
-        setMessage={setMessage}
-        addButtonLabel={showStages && activePipeline.type === 'custom' ? 'Edit Stages' : 'Pipeline Settings'}
-        addButtonIcon={Settings}
-        onAddButtonClick={showStages && activePipeline.type === 'custom' ? () => setCustomStageActionsOpen(true) : openPipelineSettings}
-        actionExtraContent={(
-          <button type="button" className="lf-btn lf-btn-secondary pipeline-manage-stages-btn" onClick={() => setShowStages((current) => !current)}>
-            {showStages ? 'Hide Stages' : 'Manage Stages'}
-          </button>
-        )}
-        panelAfterContent={(
-          <>
-            {showStages ? (
-              <PipelineStagesPreview
-                activePipeline={activePipeline}
-                stages={stageList}
-                editMode={showStages}
-                openEditStage={openEditStage}
-                openCustomStageActions={() => setCustomStageActionsOpen(true)}
-                setStageFormChoice={setStageFormChoice}
-                setStageAsWon={setStageAsWon}
-                setStageAsLost={setStageAsLost}
-                opportunityStageId={opportunityStageId}
-                opportunityStageMode={opportunityStageMode}
-                setDeleteStage={setDeleteStage}
-                setDraggedStageId={setDraggedStageId}
-                moveStage={moveStage}
-              />
-            ) : (
-              <PipelineKanbanBoard
-                stages={stageList}
-                leads={[...stageLeads, ...dummyPipelineLeads]}
-                opportunities={filtered}
-                dragged={dragged}
-                draggedLead={draggedLead}
-                setDragged={setDragged}
-                setDraggedLead={setDraggedLead}
-                setLeads={setLeads}
-                setDummyPipelineLeads={setDummyPipelineLeads}
-                setOpportunities={setOpportunities}
-                moveLeadToStage={moveLeadToStage}
-                openItemOpportunityStage={openItemOpportunityStage}
-                formatCurrency={formatCurrency}
-              />
-            )}
-          </>
-        )}
-        hideTable
-        filterConfig={[
-          { key: 'type', label: 'Stage', options: ['All', ...stageList.map((stage) => stage.name)] },
-          { key: 'owner', label: 'Owner', options: owners },
-          { key: 'dateRange', label: 'Date range', type: 'dateRange', options: ['All', 'Today', 'Last 7 Days', 'This Month', 'Custom Range'], defaultValue: 'All' },
-        ]}
-        summaryItems={[
-          { label: 'Total Pipeline', value: '20' },
-          { label: 'Open Deals', value: '19', className: 'company-summary-blue' },
-          { label: 'Total Revenue', value: '1', className: 'company-summary-green' },
-          { label: 'Exp Revenue', value: '0', className: 'company-summary-cyan' },
-        ]}
-      />
+  const moveLeadToStage = async (lead, stageId) => {
+    const targetStage = stageList.find(s => s.id === stageId);
+    if (!targetStage) return;
 
-      {pipelineSettingsOpen && (
-        <Modal title="Pipeline Setting" onClose={() => { setPipelineSettingsOpen(false); setPipelineSettingsStep('choose'); }}>
-          {pipelineSettingsStep === 'choose' && (
-            <div className="pipeline-choice-wrapper">
-              <button
-                type="button"
-                className={`pipeline-choice-card ${activePipeline.type === 'standard' ? 'active' : ''}`}
-                onClick={chooseStandardPipeline}
-              >
-                <strong>Standard Pipeline</strong>
-                <span>Use the default CRM stages already shown on this page.</span>
-              </button>
-              <button type="button" className={`pipeline-choice-card ${activePipeline.type === 'custom' ? 'active' : ''}`} onClick={startNewPipeline}>
-                <strong>New Pipeline</strong>
-                <span>{savedCustomPipeline ? `Open ${savedCustomPipeline.name} with its saved stages.` : 'Create a named pipeline with your own stages.'}</span>
-              </button>
-              {savedCustomPipeline && (
-                <button type="button" className="pipeline-choice-card danger" onClick={deleteSavedCustomPipeline}>
-                  <strong>Delete Previous Pipeline</strong>
-                  <span>Remove {savedCustomPipeline.name} and create a new pipeline from zero.</span>
-                </button>
-              )}
-            </div>
-          )}
+    if (targetStage.entity_type === 'OPPORTUNITY' || targetStage.stage_type === 'CONVERSION') {
+      if (targetStage.stage_type !== 'CONVERSION') {
+        setMessage('Unconverted leads must be dropped into the Conversion stage to convert them.');
+        setDraggedLead(null);
+        return;
+      }
+      openConversionModal(lead, targetStage.id);
+      return;
+    }
 
-          {pipelineSettingsStep === 'name' && (
-            <div className="pipeline-new-flow">
-              <label className="field wide">
-                <span>Pipeline Name*</span>
-                <input
-                  value={newPipelineName}
-                  placeholder="e.g. Enterprise Sales"
-                  onChange={(event) => setNewPipelineName(event.target.value)}
-                  autoFocus
-                />
-              </label>
-              <PanelActions wide>
-                <button type="button" className="button secondary" onClick={() => setPipelineSettingsStep('choose')}>Back</button>
-                <button type="button" className="button primary" onClick={continueNewPipeline}>Continue</button>
-              </PanelActions>
-            </div>
-          )}
+    try {
+      const res = await authRequest('/api/pipeline/move/', {
+        method: 'POST',
+        body: JSON.stringify({
+          entity_type: 'lead',
+          id: lead.backendId || lead.id,
+          target_stage_id: targetStage.id
+        })
+      });
+      if (isResponseSuccess(res)) {
+        fetchAllLeadsAndOpportunities();
+        setMessage('Lead stage updated successfully.');
+      }
+    } catch (err) {
+      setMessage(err.message || 'Failed to move lead.');
+    }
+    setDraggedLead(null);
+  };
 
-          {pipelineSettingsStep === 'stages' && (
-            <div className="pipeline-new-flow">
-              <div className="pipeline-builder-heading">
-                <strong>{newPipelineName}</strong>
-                <span>Add the stages you want to show on the Pipeline page.</span>
-              </div>
-              <div className="pipeline-custom-stage-list">
-                {newPipelineStages.map((stage, index) => (
-                  <div key={stage.id} className="pipeline-custom-stage-row">
-                    <span>{index + 1}</span>
-                    <input
-                      value={stage.name}
-                      placeholder={`Stage ${index + 1}`}
-                      onChange={(event) => updateNewPipelineStage(stage.id, event.target.value)}
-                    />
-                    {newPipelineStages.length > 1 && (
-                      <button type="button" className="pipeline-remove-stage" aria-label="Remove stage" onClick={() => removeNewPipelineStage(stage.id)}>
-                        <Trash2 size={15} />
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-              <button type="button" className="pipeline-add-stage" onClick={addNewPipelineStage}>
-                <Plus size={15} /> Add Stage
-              </button>
-              <PanelActions wide>
-                <button type="button" className="button secondary" onClick={() => setPipelineSettingsStep('name')}>Back</button>
-                <button type="button" className="button primary" onClick={createCustomPipeline}>Create Pipeline</button>
-              </PanelActions>
-            </div>
-          )}
-        </Modal>
-      )}
-      {customStageActionsOpen && (
-        <Modal title="Edit Stages" onClose={() => setCustomStageActionsOpen(false)}>
-          <div className="pipeline-stage-action-picker">
-            <button
-              type="button"
-              className="pipeline-form-option"
-              onClick={() => {
-                setCustomStageActionsOpen(false);
-                openCreateManagedStage();
-              }}
-            >
-              <strong>Add Stage</strong>
-              <span>Create one more stage in this pipeline.</span>
-            </button>
-            <button
-              type="button"
-              className="pipeline-form-option"
-              onClick={() => {
-                setCustomStageActionsOpen(false);
-                openRenamePipeline();
-              }}
-            >
-              <strong>Edit Pipeline Name</strong>
-              <span>Rename the current custom pipeline.</span>
-            </button>
-          </div>
-        </Modal>
-      )}
-      {stageModalOpen && (
-        <Modal className="stage-edit-modal" title={editingStage ? 'Edit Stage' : 'Create Stage'} onClose={() => setStageModalOpen(false)}>
-          <form className="form-grid stage-form-grid" onSubmit={createStage}>
-            <TextField label="Stage Name*" value={stageForm.name} onChange={(name) => setStageForm({ ...stageForm, name })} />
-            <SearchableSelect
-              className="field stage-owner-select"
-              label="Owner*"
-              value={stageForm.owner}
-              options={owners.filter((item) => item !== 'All')}
-              onChange={(owner) => setStageForm({ ...stageForm, owner })}
-              placeholder="Search owner"
-            />
-            <PanelActions wide>
-              <button type="button" className="button secondary" onClick={() => setStageModalOpen(false)}>Cancel</button>
-              <button type="submit" className="button primary">Save Changes</button>
-            </PanelActions>
-          </form>
-        </Modal>
-      )}
-      {renamePipelineOpen && (
-        <Modal title="Edit Pipeline Name" onClose={() => setRenamePipelineOpen(false)}>
-          <form className="form-grid" onSubmit={savePipelineName}>
-            <label className="field wide">
-              <span>Pipeline Name*</span>
-              <input value={pipelineNameDraft} onChange={(event) => setPipelineNameDraft(event.target.value)} autoFocus />
-            </label>
-            <PanelActions wide>
-              <button type="button" className="button secondary" onClick={() => setRenamePipelineOpen(false)}>Cancel</button>
-              <button type="submit" className="button primary">Save Name</button>
-            </PanelActions>
-          </form>
-        </Modal>
-      )}
-      {stageFormChoice && (
-        <Modal className="confirm-opportunity-form-modal" title="Confirm Opportunity Form" onClose={() => setStageFormChoice(null)}>
-          <div className="pipeline-opportunity-form-picker">
-            <div className="pipeline-opportunity-form-copy">
-              <span>Configure Opportunity Stage</span>
-              <h3>{stageFormChoice.name}</h3>
-              <p>Select the form that should open when a record enters this stage. This will replace the current opportunity-stage form selection.</p>
-            </div>
-            <div className="pipeline-opportunity-form-options">
-              <button type="button" className="pipeline-form-option" onClick={() => makeStandardOpportunityStage(stageFormChoice)}>
-                <span className="pipeline-form-option-kicker">Recommended</span>
-                <FileText size={21} aria-hidden="true" />
-                <span className="pipeline-form-option-copy">
-                  <strong>Use Standard Form</strong>
-                  <span>Company, contact, deal amount, close date, stage, and owner.</span>
-                </span>
-              </button>
-              <button type="button" className="pipeline-form-option" onClick={() => openCustomBuilder(stageFormChoice)}>
-                <FileCog size={22} aria-hidden="true" />
-                <span className="pipeline-form-option-copy">
-                  <strong>Create a New Form</strong>
-                  <span>Define custom fields, data types, and required inputs for this stage.</span>
-                </span>
-              </button>
-            </div>
-          </div>
-        </Modal>
-      )}
-      {customBuilderStage && (
-        <Modal title="Confirm Custom Form" onClose={() => { setCustomBuilderStage(null); setCustomBuilderError(''); }}>
-          <div className="custom-builder">
-            <div className="form-grid custom-field-grid">
-              <TextField label="Field Name*" value={fieldDraft.label} onChange={(label) => setFieldDraft({ ...fieldDraft, label })} />
-              <SelectField label="Data Type" value={fieldDraft.type} options={customFieldTypes} onChange={(type) => setFieldDraft({ ...fieldDraft, type })} />
-              <SelectField label="Required" value={fieldDraft.required} options={['Yes', 'No']} onChange={(required) => setFieldDraft({ ...fieldDraft, required })} />
-              <PanelActions>
-                <button type="button" className="button secondary" onClick={addCustomField}><Plus size={16} />{editingFieldId ? 'Update Field' : 'Add Field'}</button>
-              </PanelActions>
-            </div>
-            <div className="custom-fields-table">
-              {customFields.length > 0 ? customFields.map((field) => (
-                <div key={field.id} className="custom-field-row">
-                  <div>
-                    <strong>{field.label}</strong>
-                    <span className="custom-field-meta">
-                      <span>{field.type}</span>
-                      <span>{field.required === 'Yes' ? 'Required' : 'Optional'}</span>
-                    </span>
-                  </div>
-                  <div className="row-menu-actions">
-                    <IconButton label="Edit Field" onClick={() => editCustomField(field)}><Edit size={15} /></IconButton>
-                    <IconButton label="Delete Field" onClick={() => deleteCustomField(field.id)}><Trash2 size={15} /></IconButton>
-                  </div>
-                </div>
-              )) : <div className="empty-field-row">No fields created yet.</div>}
-            </div>
-            {customBuilderError && <div className="custom-builder-error" role="alert">{customBuilderError}</div>}
-            <PanelActions>
-              <button className="button secondary" onClick={() => { setCustomBuilderStage(null); setCustomBuilderError(''); }}>Cancel</button>
-              <button className="button primary" onClick={saveCustomStageForm}>Save Custom Form</button>
-            </PanelActions>
-          </div>
-        </Modal>
-      )}
-      {opportunityModalOpen && (
-        <Modal className="convert-opportunity-modal" title={convertingLeadId ? 'Convert Lead to Opportunity' : 'Opportunity Details'} onClose={() => setOpportunityModalOpen(false)}>
-          <form className="convert-opportunity-form" onSubmit={saveOpportunity}>
-            <section className="convert-linked-summary" aria-label="Auto-linked records summary">
-              <h4>Auto-Linked Records Summary</h4>
-              <div>
-                <span>Company to Link/Create</span>
-                <strong>{opportunityForm.company || '-'}</strong>
-              </div>
-              <div>
-                <span>Contact to Link/Create</span>
-                <strong>{opportunityForm.contact || '-'}</strong>
-              </div>
-              <div>
-                <span>Assigned Salesperson</span>
-                <strong>{opportunityForm.owner || '-'}</strong>
-              </div>
-            </section>
+  const openItemOpportunityStage = async (item, stageId) => {
+    const targetStage = stageList.find(s => s.id === stageId);
+    if (!targetStage) return;
 
-            <label className={`field wide ${opportunityErrors.includes('Deal Name') ? 'field-error' : ''}`}>
-              <span>Deal Name *</span>
-              <input value={opportunityForm.dealName} onChange={(event) => updateOpportunityField('dealName', event.target.value)} />
-            </label>
-            <label className={`field wide ${opportunityErrors.includes('Deal Amount') ? 'field-error' : ''}`}>
-              <span>Deal Amount ($) *</span>
-              <input type="number" step="0.01" value={opportunityForm.value} onChange={(event) => updateOpportunityField('value', event.target.value)} />
-            </label>
-            <label className={`field wide ${opportunityErrors.includes('Expected Close Date') ? 'field-error' : ''}`}>
-              <span>Expected Close Date *</span>
-              <input type="date" value={opportunityForm.closeDate} onChange={(event) => updateOpportunityField('closeDate', event.target.value)} />
-            </label>
-            <label className="field wide">
-              <span>Description</span>
-              <textarea rows="4" value={opportunityForm.notes} onChange={(event) => setOpportunityForm({ ...opportunityForm, notes: event.target.value })} />
-            </label>
-            <p className="convert-custom-empty">No custom fields configured for this opportunity type.</p>
-            <PanelActions wide>
-              <button type="button" className="button secondary" onClick={() => { setOpportunityModalOpen(false); setEditingOpportunityId(null); setConvertingLeadId(null); setOpportunityErrors([]); }}>Cancel</button>
-              <button type="submit" className="button primary">{editingOpportunityId ? 'Save Changes' : 'Save Opportunity'}</button>
-            </PanelActions>
-          </form>
-        </Modal>
-      )}
-      {customDrop && (
-        <Modal className="convert-opportunity-modal custom-opportunity-drop-modal" title={`${customDrop.stageName} Opportunity Form`} onClose={() => setCustomDrop(null)}>
-          <form className="convert-opportunity-form" onSubmit={submitCustomDrop}>
-            <section className="convert-linked-summary" aria-label="Auto-linked records summary">
-              <h4>Auto-Linked Records Summary</h4>
-              <div>
-                <span>Company to Link/Create</span>
-                <strong>{(customDrop.lead || customDrop.item)?.company || '-'}</strong>
-              </div>
-              <div>
-                <span>Contact to Link/Create</span>
-                <strong>{customDrop.lead?.customer || customDrop.item?.contact || '-'}</strong>
-              </div>
-              <div>
-                <span>Assigned Salesperson</span>
-                <strong>{(customDrop.lead || customDrop.item)?.owner || '-'}</strong>
-              </div>
-            </section>
-            {customFields.map((field) => (
-              <label key={field.id} className={`field ${customErrors.includes(field.id) ? 'field-error' : ''}`}>
-                <span>{field.label}{field.required === 'Yes' ? ' *' : ''}</span>
-                {renderCustomDropInput(field)}
-              </label>
-            ))}
-            {customErrors.length > 0 && <div className="custom-builder-error" role="alert">Fill all required custom fields.</div>}
-            <PanelActions wide>
-              <button type="button" className="button secondary" onClick={() => setCustomDrop(null)}>Cancel</button>
-              <button type="submit" className="button primary">Save Opportunity</button>
-            </PanelActions>
-          </form>
-        </Modal>
-      )}
-      {deleteStage && (
-        <Confirm
-          danger
-          title="Delete Stage"
-          text={`Delete stage "${deleteStage.name}"?`}
-          confirmLabel="Delete"
-          onCancel={() => setDeleteStage(null)}
-          onConfirm={confirmDeleteStage}
-        />
-      )}
-    </div>
-  );
+    if (targetStage.entity_type === 'LEAD') {
+      setMessage('Opportunities cannot be moved to Lead-only stages.');
+      setDragged(null);
+      return;
+    }
+
+    if (item.pipeline_stage === stageId) {
+      setDragged(null);
+      return;
+    }
+
+    try {
+      const res = await authRequest('/api/pipeline/move/', {
+        method: 'POST',
+        body: JSON.stringify({
+          entity_type: 'opportunity',
+          id: item.backendId || item.id,
+          target_stage_id: targetStage.id
+        })
+      });
+      if (isResponseSuccess(res)) {
+        fetchAllLeadsAndOpportunities();
+        setMessage('Opportunity stage updated successfully.');
+      }
+    } catch (err) {
+      setMessage(err.message || 'Failed to move opportunity.');
+    }
+    setDragged(null);
+  };
+
+  const deletePipelineStageOpportunity = async (opp) => {
+    setMessage('Opportunities cannot be deleted directly. They must be managed via CRM lifecycle.');
+  };
+
+  // Build filter options dynamically using live owners
+  const ownerFilterOptions = useMemo(() => {
+    const list = ['All'];
+    availableUsers.forEach(u => {
+      const name = u.full_name || u.username;
+      if (name && !list.includes(name)) list.push(name);
+    });
+    return list;
+  }, [availableUsers]);
 
   if (activeStagePage && opportunityStage) {
     const pageRecords = stageRecords
@@ -1453,7 +1716,7 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
                         <div className="row-action-menu">
                           <button type="button" onClick={() => { setMessage('Edit record opened.'); setOpenRecordActionId(''); }}><Edit size={15} />Edit</button>
                           <hr />
-                          <button type="button" className="danger-menu-item" onClick={() => { setStageRecords((current) => current.filter((item) => item.id !== record.id)); setOpenRecordActionId(''); }}><Trash2 size={15} />Delete</button>
+                          <button type="button" className="danger-menu-item" onClick={() => { deletePipelineStageOpportunity(record); setOpenRecordActionId(''); }}><Trash2 size={15} />Delete</button>
                         </div>
                       )}
                     </div>
@@ -1537,60 +1800,6 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
     );
   }
 
-  if (customBuilderStage) {
-    return (
-      <section className="page salesforce-leads salesforce-pipeline">
-        <div className="sf-list-head">
-          <div className="sf-title-wrap">
-            <div className="sf-object-icon pipeline-icon"><span /></div>
-            <div>
-              <p>{customBuilderStage.name}</p>
-              <button type="button" className="sf-list-title">
-                Create your Custom New Form <ChevronDown size={18} />
-              </button>
-              <p className="sf-page-subtitle">Build custom fields for this opportunity stage.</p>
-            </div>
-            <button type="button" className="sf-pin" aria-label="Pin list"><Pin size={15} /></button>
-          </div>
-        </div>
-        <div className="sf-list-panel custom-builder-page">
-          <div className="custom-builder">
-            <div className="form-grid custom-field-grid">
-              <TextField label="Field Name*" value={fieldDraft.label} onChange={(label) => setFieldDraft({ ...fieldDraft, label })} />
-              <SelectField label="Data Type" value={fieldDraft.type} options={customFieldTypes} onChange={(type) => setFieldDraft({ ...fieldDraft, type })} />
-              <SelectField label="Required" value={fieldDraft.required} options={['Yes', 'No']} onChange={(required) => setFieldDraft({ ...fieldDraft, required })} />
-              <PanelActions>
-                <button type="button" className="button secondary" onClick={addCustomField}><Plus size={16} />{editingFieldId ? 'Update Field' : 'Add Field'}</button>
-              </PanelActions>
-            </div>
-            <div className="custom-fields-table">
-              {customFields.length > 0 ? customFields.map((field) => (
-                <div key={field.id} className="custom-field-row">
-                  <div>
-                    <strong>{field.label}</strong>
-                    <span className="custom-field-meta">
-                      <span>{field.type}</span>
-                      <span>{field.required === 'Yes' ? 'Required' : 'Optional'}</span>
-                    </span>
-                  </div>
-                  <div className="row-menu-actions">
-                    <IconButton label="Edit Field" onClick={() => editCustomField(field)}><Edit size={15} /></IconButton>
-                    <IconButton label="Delete Field" onClick={() => deleteCustomField(field.id)}><Trash2 size={15} /></IconButton>
-                  </div>
-                </div>
-              )) : <div className="empty-field-row">No fields created yet.</div>}
-            </div>
-            {customBuilderError && <div className="custom-builder-error" role="alert">{customBuilderError}</div>}
-            <PanelActions>
-              <button className="button secondary" onClick={() => setCustomBuilderStage(null)}>Cancel</button>
-              <button className="button primary" onClick={saveCustomStageForm}>Save Custom Form</button>
-            </PanelActions>
-          </div>
-        </div>
-      </section>
-    );
-  }
-
   return (
     <section className="page salesforce-leads salesforce-pipeline pipeline-redesign-page">
       <div className="pipeline-main-card">
@@ -1617,6 +1826,25 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
           <section className="page-panel-filters lf-filter-bar pipeline-filter-row" aria-label="Pipeline filters">
             <div className="pipeline-filter-group">
               <label className="pipeline-inline-filter">
+                <span>Pipeline:</span>
+                <select 
+                  value={activePipelineId || ''} 
+                  onChange={(event) => {
+                    const selectedId = Number(event.target.value);
+                    const selectedPipe = pipelinesList.find(p => p.id === selectedId);
+                    if (selectedPipe) {
+                      setActivePipelineId(selectedId);
+                      setActivePipeline({ type: selectedPipe.is_default ? 'standard' : 'custom', name: selectedPipe.name });
+                      setFilters((current) => ({ ...current, stage: 'All' }));
+                    }
+                  }}
+                >
+                  {pipelinesList.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="pipeline-inline-filter">
                 <span>Stage:</span>
                 <select value={filters.stage} onChange={(event) => updateFilter('stage', event.target.value)}>
                   <option value="All">All</option>
@@ -1626,21 +1854,21 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
               <label className="pipeline-inline-filter">
                 <span>Owner:</span>
                 <select value={filters.owner} onChange={(event) => updateFilter('owner', event.target.value)}>
-                  {owners.map((owner) => <option key={owner} value={owner}>{owner}</option>)}
-                </select>
-              </label>
-              <label className="pipeline-inline-filter">
-                <span>Priority:</span>
-                <select value={filters.priority} onChange={(event) => updateFilter('priority', event.target.value)}>
-                  {priorities.map((priority) => <option key={priority} value={priority}>{priority}</option>)}
+                  {ownerFilterOptions.map((owner) => <option key={owner} value={owner}>{owner}</option>)}
                 </select>
               </label>
             </div>
 
-            <button type="button" className="pipeline-settings-button" onClick={openPipelineSettings}>
-              <Settings size={15} />
-              Pipeline Settings
-            </button>
+            <div className="pipeline-actions-group" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <button type="button" className="button primary add-lead-button" onClick={openNewLead} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', height: '38px', padding: '0 14px', borderRadius: '7px', fontSize: '13px', fontWeight: 600 }}>
+                <Plus size={15} />
+                Add Lead
+              </button>
+              <button type="button" className="pipeline-settings-button" onClick={openPipelineSettings}>
+                <Settings size={15} />
+                Pipeline Settings
+              </button>
+            </div>
           </section>
         </section>
 
@@ -1648,62 +1876,75 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
           <header className="pipeline-stage-header">
             <h2>{activePipeline.name} Stages</h2>
             <button type="button" className="pipeline-edit-stages" onClick={() => setShowStages((show) => !show)}>
-              {showStages ? 'Close Edit' : 'Edit Stages'}
+              {showStages ? 'Hide Stages List' : 'View/Manage Stages'}
             </button>
           </header>
 
           {showStages && (
-            <div className="pipeline-stage-edit-bar">
-              <span>Manage the stages in the active pipeline.</span>
-              <button type="button" className="pipeline-secondary-action" onClick={openCreateStage}>
-                <Plus size={14} /> Add Stage
-              </button>
+            <div style={{ borderBottom: '1px solid #e5eaf1', background: '#f8fafc' }}>
+              <div className="pipeline-stage-edit-bar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>Manage the stages in the active pipeline.</span>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  {activePipeline.type === 'custom' && (canEdit || canCreate) && (
+                    <button type="button" className="pipeline-secondary-action wizard-launch-btn" onClick={openSetupWizard}>
+                      ✨ Setup Wizard
+                    </button>
+                  )}
+                  {canCreate && (
+                    <button type="button" className="pipeline-secondary-action" onClick={openCreateManagedStage}>
+                      <Plus size={14} /> Add Stage
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="pipeline-stage-list">
+                {stageList.map((stage, index) => {
+                  const stageCount = filtered.filter((item) => item.stage === stage.name).length
+                    + stageLeads.filter((lead) => getOwnerName(lead.owner) === stage.owner || lead.status === stage.name).length;
+                  const stageKey = stage.name.toLowerCase();
+                  const isWon = stageKey === 'won' || stage.stage_type === 'WON';
+                  const isLost = stageKey === 'lost' || stage.stage_type === 'LOST';
+
+                  return (
+                    <article
+                      key={stage.id}
+                      className={`pipeline-stage-row ${isWon ? 'pipeline-stage-won' : ''} ${isLost ? 'pipeline-stage-lost' : ''}`}
+                    >
+                      <div className="pipeline-stage-index">{index + 1}</div>
+                      <div className="pipeline-stage-info">
+                        <strong>{stage.name}</strong>
+                        <span>
+                          {activePipeline.type === 'standard'
+                            ? standardStageDescriptions[stage.name] || 'Pipeline stage'
+                            : 'Custom pipeline stage'}
+                        </span>
+                      </div>
+                      <div className="pipeline-stage-owner">
+                        {isWon || isLost ? <Lock size={13} /> : <Users size={13} />}
+                        <span>{isWon || isLost ? 'System Automated' : 'Shared'}</span>
+                      </div>
+                      <div className="pipeline-stage-actions">
+                        <span className="pipeline-stage-count">{stageCount}</span>
+                        <>
+                          {canEdit && (
+                            <button type="button" className="pipeline-row-icon" aria-label={`Edit ${stage.name}`} onClick={() => openEditStage(stage)}>
+                              <Edit size={14} />
+                            </button>
+                          )}
+                          {canDelete && (
+                            <button type="button" className="pipeline-row-icon danger" aria-label={`Delete ${stage.name}`} onClick={() => setDeleteStage(stage)}>
+                              <Trash2 size={14} />
+                            </button>
+                          )}
+                        </>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
             </div>
           )}
-
-          <div className="pipeline-stage-list">
-            {stageList.map((stage, index) => {
-              const stageCount = filtered.filter((item) => item.stage === stage.name).length
-                + stageLeads.filter((lead) => lead.status === stage.name).length;
-              const stageKey = stage.name.toLowerCase();
-              const isWon = stageKey === 'won';
-              const isLost = stageKey === 'lost';
-
-              return (
-                <article
-                  key={stage.id}
-                  className={`pipeline-stage-row ${isWon ? 'pipeline-stage-won' : ''} ${isLost ? 'pipeline-stage-lost' : ''}`}
-                >
-                  <div className="pipeline-stage-index">{index + 1}</div>
-                  <div className="pipeline-stage-info">
-                    <strong>{stage.name}</strong>
-                    <span>
-                      {activePipeline.type === 'standard'
-                        ? standardStageDescriptions[stage.name] || 'Pipeline stage'
-                        : 'Custom pipeline stage'}
-                    </span>
-                  </div>
-                  <div className="pipeline-stage-owner">
-                    {isWon || isLost ? <Lock size={13} /> : <Users size={13} />}
-                    <span>{isWon || isLost ? 'System Automated' : stage.owner === 'System' ? 'Shared' : stage.owner}</span>
-                  </div>
-                  <div className="pipeline-stage-actions">
-                    <span className="pipeline-stage-count">{stageCount}</span>
-                    {showStages && (
-                      <>
-                        <button type="button" className="pipeline-row-icon" aria-label={`Edit ${stage.name}`} onClick={() => openEditStage(stage)}>
-                          <Edit size={14} />
-                        </button>
-                        <button type="button" className="pipeline-row-icon danger" aria-label={`Delete ${stage.name}`} onClick={() => setDeleteStage(stage)}>
-                          <Trash2 size={14} />
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </article>
-              );
-            })}
-          </div>
         </section>
       </div>
 
@@ -1723,6 +1964,21 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
                 <strong>New Pipeline</strong>
                 <span>Create a named pipeline with your own stages.</span>
               </button>
+              {activePipeline.type === 'custom' && (
+                <button
+                  type="button"
+                  className="pipeline-choice-card danger"
+                  onClick={() => {
+                    if (window.confirm(`Are you sure you want to delete pipeline "${activePipeline.name}"?`)) {
+                      deleteSavedCustomPipeline();
+                      setPipelineSettingsOpen(false);
+                    }
+                  }}
+                >
+                  <strong>Delete Current Pipeline</strong>
+                  <span>Delete "${activePipeline.name}" and all of its stages.</span>
+                </button>
+              )}
             </div>
           )}
 
@@ -1744,35 +2000,332 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
             </div>
           )}
 
-          {pipelineSettingsStep === 'stages' && (
+          {/* Setup Wizard Step 1: Stages List & Ordering */}
+          {pipelineSettingsStep === 'wizard-stages' && (
             <div className="pipeline-new-flow">
-              <div className="pipeline-builder-heading">
-                <strong>{newPipelineName}</strong>
-                <span>Add the stages you want to use in this pipeline.</span>
+              <div className="stepper-header" style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #eee', paddingBottom: '8px' }}>
+                <span style={{ fontWeight: 'bold', color: '#3b82f6' }}>Step 1: Pipeline Stages</span>
+                <span style={{ color: '#888' }}>Guided Setup Wizard</span>
               </div>
-              <div className="pipeline-custom-stage-list">
+              <div className="pipeline-builder-heading" style={{ marginBottom: '12px' }}>
+                <strong>{newPipelineName || activePipeline.name} Stages</strong>
+                <span className="small text-muted" style={{ display: 'block', fontSize: '0.85rem' }}>Design your pipeline stages. Use Up/Down arrows to reorder.</span>
+              </div>
+              <div className="pipeline-custom-stage-list" style={{ maxHeight: '240px', overflowY: 'auto', marginBottom: '12px' }}>
                 {newPipelineStages.map((stage, index) => (
-                  <div key={stage.id} className="pipeline-custom-stage-row">
-                    <span>{index + 1}</span>
+                  <div key={stage.id} className="pipeline-custom-stage-row" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                    <span className="badge bg-secondary font-monospace" style={{ width: '25px', textAlign: 'center', padding: '4px' }}>{index + 1}</span>
                     <input
+                      style={{ flex: 1 }}
                       value={stage.name}
                       placeholder={`Stage ${index + 1}`}
                       onChange={(event) => updateNewPipelineStage(stage.id, event.target.value)}
                     />
+                    <input
+                      type="color"
+                      value={stage.color || '#6c757d'}
+                      style={{ width: '36px', height: '36px', padding: 0, border: 'none', cursor: 'pointer' }}
+                      onChange={(event) => updateNewPipelineStageColor(stage.id, event.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="button secondary py-1 px-2"
+                      disabled={index === 0}
+                      onClick={() => moveNewPipelineStageIndex(index, index - 1)}
+                    >
+                      &uarr;
+                    </button>
+                    <button
+                      type="button"
+                      className="button secondary py-1 px-2"
+                      disabled={index === newPipelineStages.length - 1}
+                      onClick={() => moveNewPipelineStageIndex(index, index + 1)}
+                    >
+                      &darr;
+                    </button>
                     {newPipelineStages.length > 1 && (
-                      <button type="button" className="pipeline-remove-stage" aria-label="Remove stage" onClick={() => removeNewPipelineStage(stage.id)}>
-                        <Trash2 size={15} />
+                      <button type="button" className="pipeline-remove-stage button danger py-1 px-2" aria-label="Remove stage" onClick={() => removeNewPipelineStage(stage.id)}>
+                        &times;
                       </button>
                     )}
                   </div>
                 ))}
               </div>
-              <button type="button" className="pipeline-add-stage" onClick={addNewPipelineStage}>
+              <button type="button" className="pipeline-add-stage button secondary py-1 px-3 mb-3" onClick={addNewPipelineStage}>
                 <Plus size={15} /> Add Stage
               </button>
               <PanelActions wide>
-                <button type="button" className="button secondary" onClick={() => setPipelineSettingsStep('name')}>Back</button>
-                <button type="button" className="button primary" onClick={createCustomPipeline}>Create Pipeline</button>
+                <button type="button" className="button secondary" onClick={() => setPipelineSettingsStep(activePipelineId ? 'choose' : 'name')}>Back</button>
+                <button type="button" className="button primary" onClick={() => {
+                  const emptyStage = newPipelineStages.find(s => !s.name || !s.name.trim());
+                  if (emptyStage) {
+                    setMessage("Stage names cannot be empty.");
+                    return;
+                  }
+                  setPipelineSettingsStep('wizard-behavior');
+                }}>Next: Sales Flow &rarr;</button>
+              </PanelActions>
+            </div>
+          )}
+
+          {/* Setup Wizard Step 2: Sales Flow Transitions */}
+          {pipelineSettingsStep === 'wizard-behavior' && (
+            <div className="pipeline-new-flow">
+              <div className="stepper-header" style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #eee', paddingBottom: '8px' }}>
+                <span style={{ fontWeight: 'bold', color: '#3b82f6' }}>Step 2: Sales Flow Behavior</span>
+                <span style={{ color: '#888' }}>Guided Setup Wizard</span>
+              </div>
+              
+              <div className="card p-3 mb-3" style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '12px' }}>
+                <label className="field wide mb-1 fw-semibold" style={{ fontWeight: '600' }}>Where does a Lead become an Opportunity?</label>
+                <span className="small text-muted" style={{ display: 'block', fontSize: '0.85rem', marginBottom: '8px' }}>
+                  Stages prior to this selection represent Lead pipelines. This stage and all subsequent stages represent Opportunity pipelines.
+                </span>
+                <select 
+                  className="form-select border-primary" 
+                  value={wizardConversionStageIdx ?? ''} 
+                  onChange={(e) => setWizardConversionStageIdx(e.target.value !== '' ? parseInt(e.target.value) : null)}
+                >
+                  <option value="">Choose conversion stage...</option>
+                  {newPipelineStages.map((stage, idx) => (
+                    <option key={idx} value={idx}>{stage.name} (Position: {idx + 1})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="card p-3 mb-3" style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <div>
+                    <span style={{ fontWeight: '600', display: 'block' }}>Does this pipeline have a Won stage?</span>
+                    <small className="text-muted" style={{ fontSize: '0.8rem' }}>A terminal stage representing successfully closed business.</small>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <label><input type="radio" checked={wizardHasWon} onChange={() => setWizardHasWon(true)} /> Yes</label>
+                    <label><input type="radio" checked={!wizardHasWon} onChange={() => { setWizardHasWon(false); setWizardWonStageIdx(null); }} /> No</label>
+                  </div>
+                </div>
+                {wizardHasWon && (
+                  <select 
+                    className="form-select" 
+                    value={wizardWonStageIdx ?? ''} 
+                    onChange={(e) => setWizardWonStageIdx(e.target.value !== '' ? parseInt(e.target.value) : null)}
+                  >
+                    <option value="">Select Won Stage...</option>
+                    {newPipelineStages.map((stage, idx) => (
+                      <option key={idx} value={idx}>{stage.name} (Position: {idx + 1})</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div className="card p-3 mb-3" style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <div>
+                    <span style={{ fontWeight: '600', display: 'block' }}>Does this pipeline have a Lost stage?</span>
+                    <small className="text-muted" style={{ fontSize: '0.8rem' }}>A terminal stage representing closed or lost business.</small>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <label><input type="radio" checked={wizardHasLost} onChange={() => setWizardHasLost(true)} /> Yes</label>
+                    <label><input type="radio" checked={!wizardHasLost} onChange={() => { setWizardHasLost(false); setWizardLostStageIdx(null); }} /> No</label>
+                  </div>
+                </div>
+                {wizardHasLost && (
+                  <select 
+                    className="form-select" 
+                    value={wizardLostStageIdx ?? ''} 
+                    onChange={(e) => setWizardLostStageIdx(e.target.value !== '' ? parseInt(e.target.value) : null)}
+                  >
+                    <option value="">Select Lost Stage...</option>
+                    {newPipelineStages.map((stage, idx) => (
+                      <option key={idx} value={idx}>{stage.name} (Position: {idx + 1})</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <PanelActions wide>
+                <button type="button" className="button secondary" onClick={() => setPipelineSettingsStep('wizard-stages')}>Back</button>
+                <button type="button" className="button primary" onClick={() => {
+                  const err = validateWizardStep2();
+                  if (err) {
+                    setMessage(err);
+                    return;
+                  }
+                  setPipelineSettingsStep('wizard-form');
+                }}>Next: Conversion Form &rarr;</button>
+              </PanelActions>
+            </div>
+          )}
+
+          {/* Setup Wizard Step 3: Custom Conversion Form Builder */}
+          {pipelineSettingsStep === 'wizard-form' && (
+            <div className="pipeline-new-flow">
+              <div className="stepper-header" style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #eee', paddingBottom: '8px' }}>
+                <span style={{ fontWeight: 'bold', color: '#3b82f6' }}>Step 3: Conversion Form</span>
+                <span style={{ color: '#888' }}>Guided Setup Wizard</span>
+              </div>
+
+              <div className="form-check form-switch mb-3 p-3 bg-light rounded shadow-sm border d-flex justify-content-between align-items-center" style={{ padding: '12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px' }}>
+                <div>
+                  <label className="form-check-label fw-semibold text-dark d-block" style={{ fontWeight: '600' }}>Enable custom conversion form fields</label>
+                  <small className="text-muted" style={{ display: 'block', fontSize: '0.8rem' }}>Collect extra information (e.g. Budget, Requirements) when a Lead converts.</small>
+                </div>
+                <input 
+                  className="form-check-input" 
+                  type="checkbox" 
+                  checked={wizardEnableForm} 
+                  onChange={(e) => setWizardEnableForm(e.target.checked)} 
+                  style={{ width: '2.5em', height: '1.25em', cursor: 'pointer' }}
+                />
+              </div>
+
+              {wizardEnableForm && (
+                <div style={{ marginBottom: '12px' }}>
+                  <div className="border rounded bg-white mb-3" style={{ maxHeight: '160px', overflowY: 'auto', border: '1px solid #e2e8f0' }}>
+                    <table className="table table-sm align-middle mb-0" style={{ width: '100%', fontSize: '0.85rem' }}>
+                      <thead style={{ background: '#f8fafc' }}>
+                        <tr>
+                          <th style={{ padding: '6px' }}>Field Label</th>
+                          <th>Data Type</th>
+                          <th>Required?</th>
+                          <th>Options</th>
+                          <th style={{ textAlign: 'center', width: '50px' }}>Remove</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {wizardFormFields.length === 0 ? (
+                          <tr><td colSpan="5" style={{ textAlign: 'center', color: '#888', padding: '12px' }}>No fields configured yet. Add fields below.</td></tr>
+                        ) : (
+                          wizardFormFields.map((field, idx) => (
+                            <tr key={idx}>
+                              <td style={{ padding: '6px', fontWeight: 'bold' }}>{field.label}</td>
+                              <td>{field.field_type}</td>
+                              <td>{field.required ? 'Yes' : 'No'}</td>
+                              <td style={{ color: '#666', maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {field.options && field.options.length ? field.options.join(', ') : '-'}
+                              </td>
+                              <td style={{ textAlign: 'center' }}>
+                                <button type="button" className="button danger py-0 px-1" onClick={() => removeWizardFormField(idx)}>&times;</button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="card p-3 border-secondary border-opacity-10 bg-light" style={{ padding: '12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px' }}>
+                    <h6 className="small text-uppercase fw-bold text-secondary mb-2" style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#475569' }}>Add Custom Field</h6>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
+                      <div>
+                        <label className="small text-muted mb-1" style={{ fontSize: '0.8rem', display: 'block' }}>Field Label Name</label>
+                        <input 
+                          type="text" 
+                          className="form-control" 
+                          value={newFieldDraft.label} 
+                          placeholder="e.g. Project Budget" 
+                          onChange={(e) => setNewFieldDraft({ ...newFieldDraft, label: e.target.value })} 
+                        />
+                      </div>
+                      <div>
+                        <label className="small text-muted mb-1" style={{ fontSize: '0.8rem', display: 'block' }}>Field Type</label>
+                        <select 
+                          className="form-select" 
+                          value={newFieldDraft.type} 
+                          onChange={(e) => setNewFieldDraft({ ...newFieldDraft, type: e.target.value })}
+                        >
+                          <option value="TEXT">Short Text</option>
+                          <option value="TEXTAREA">Long Text</option>
+                          <option value="NUMBER">Number</option>
+                          <option value="DATE">Date</option>
+                          <option value="CHECKBOX">Checkbox</option>
+                          <option value="DROPDOWN">Dropdown</option>
+                        </select>
+                      </div>
+                    </div>
+                    {newFieldDraft.type === 'DROPDOWN' && (
+                      <div style={{ marginBottom: '8px' }}>
+                        <label className="small text-muted mb-1" style={{ fontSize: '0.8rem', display: 'block' }}>Dropdown Options (comma separated)</label>
+                        <input 
+                          type="text" 
+                          className="form-control" 
+                          value={newFieldDraft.options} 
+                          placeholder="US, EU, APAC" 
+                          onChange={(e) => setNewFieldDraft({ ...newFieldDraft, options: e.target.value })} 
+                        />
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label style={{ cursor: 'pointer', fontSize: '0.85rem' }}>
+                        <input 
+                          type="checkbox" 
+                          checked={newFieldDraft.required} 
+                          onChange={(e) => setNewFieldDraft({ ...newFieldDraft, required: e.target.checked })} 
+                        /> Required
+                      </label>
+                      <button type="button" className="button primary py-1 px-3" onClick={addNewWizardFormField}>+ Add Field</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <PanelActions wide>
+                <button type="button" className="button secondary" onClick={() => setPipelineSettingsStep('wizard-behavior')}>Back</button>
+                <button type="button" className="button primary" onClick={() => setPipelineSettingsStep('wizard-review')}>Next: Review &rarr;</button>
+              </PanelActions>
+            </div>
+          )}
+
+          {/* Setup Wizard Step 4: Flow Review & Confirm */}
+          {pipelineSettingsStep === 'wizard-review' && (
+            <div className="pipeline-new-flow">
+              <div className="stepper-header" style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #eee', paddingBottom: '8px' }}>
+                <span style={{ fontWeight: 'bold', color: '#3b82f6' }}>Step 4: Review Summary</span>
+                <span style={{ color: '#888' }}>Guided Setup Wizard</span>
+              </div>
+
+              <div className="card p-3 mb-3" style={{ background: '#f8fafc', border: '1px solid #3b82f6', borderRadius: '6px', padding: '12px' }}>
+                <h6 style={{ fontWeight: 'bold', color: '#1e3a8a', marginBottom: '12px' }}>📋 Sales Pipeline Summary</h6>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '12px', fontSize: '0.85rem' }}>
+                  <div style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: '8px' }}>
+                    <span style={{ color: '#64748b', display: 'block', fontWeight: '500' }}>Lead Phase Stages:</span>
+                    <strong>{newPipelineStages.slice(0, parseInt(wizardConversionStageIdx)).map(s => s.name).join(' ➔ ') || 'None'}</strong>
+                  </div>
+                  <div style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: '8px' }}>
+                    <span style={{ color: '#64748b', display: 'block', fontWeight: '500' }}>Conversion stage Gate:</span>
+                    <strong style={{ color: '#2563eb' }}>{newPipelineStages[parseInt(wizardConversionStageIdx)]?.name}</strong>
+                  </div>
+                  <div style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: '8px' }}>
+                    <span style={{ color: '#64748b', display: 'block', fontWeight: '500' }}>Opportunity Phase Stages:</span>
+                    <strong>{newPipelineStages.slice(parseInt(wizardConversionStageIdx)).map(s => s.name).join(' ➔ ') || 'None'}</strong>
+                  </div>
+                  <div style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: '8px' }}>
+                    <span style={{ color: '#64748b', display: 'block', fontWeight: '500' }}>Terminal outcome anchors:</span>
+                    <div>
+                      Won Stage: <strong style={{ color: '#16a34a' }}>{wizardHasWon && wizardWonStageIdx !== null ? newPipelineStages[parseInt(wizardWonStageIdx)]?.name : 'Skipped / None'}</strong> | 
+                      Lost Stage: <strong style={{ color: '#dc2626' }}>{wizardHasLost && wizardLostStageIdx !== null ? newPipelineStages[parseInt(wizardLostStageIdx)]?.name : 'Skipped / None'}</strong>
+                    </div>
+                  </div>
+                  <div>
+                    <span style={{ color: '#64748b', display: 'block', fontWeight: '500' }}>Custom conversion form:</span>
+                    <strong>{wizardEnableForm ? `Enabled (${wizardFormFields.length} custom fields)` : 'Disabled'}</strong>
+                  </div>
+                </div>
+              </div>
+
+              {wizardSaveLogs.length > 0 && (
+                <div style={{ background: '#0f172a', color: '#38bdf8', fontFamily: 'monospace', padding: '12px', borderRadius: '6px', fontSize: '0.75rem', maxHeight: '120px', overflowY: 'auto', marginBottom: '12px' }}>
+                  {wizardSaveLogs.map((log, idx) => (
+                    <div key={idx}>{log}</div>
+                  ))}
+                </div>
+              )}
+
+              <PanelActions wide>
+                <button type="button" className="button secondary" disabled={wizardSaving} onClick={() => setPipelineSettingsStep('wizard-form')}>Back</button>
+                <button type="button" className="button primary" disabled={wizardSaving} onClick={saveGuidedSetupWizard}>
+                  {wizardSaving ? 'Saving Configuration...' : 'Confirm & Apply Setup'}
+                </button>
               </PanelActions>
             </div>
           )}
@@ -1782,7 +2335,6 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
         <Modal title={editingStage ? 'Edit Stage' : 'Create Stage'} onClose={() => setStageModalOpen(false)}>
           <form className="form-grid stage-form-grid" onSubmit={createStage}>
             <TextField label="Stage Name*" value={stageForm.name} onChange={(name) => setStageForm({ ...stageForm, name })} />
-            <SelectField label="Owner*" value={stageForm.owner} options={owners.filter((item) => item !== 'All')} onChange={(owner) => setStageForm({ ...stageForm, owner })} />
             <PanelActions wide>
               <button type="button" className="button secondary" onClick={() => setStageModalOpen(false)}>Cancel</button>
               <button type="submit" className="button primary">{editingStage ? 'Save Changes' : 'Save Stage'}</button>
@@ -1799,7 +2351,25 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
             <TextField label="Company" value={leadForm.company} onChange={(company) => setLeadForm({ ...leadForm, company })} />
             <SelectField label="Lead Source" value={leadForm.source} options={leadSources.filter((item) => item !== 'All')} onChange={(source) => setLeadForm({ ...leadForm, source })} />
             <SelectField label="Priority" value={leadForm.priority} options={priorities.filter((item) => item !== 'All')} onChange={(priority) => setLeadForm({ ...leadForm, priority })} />
-            <SelectField label="Owner" value={leadForm.assignLead} options={assignLeadOptions} onChange={(assignLead) => setLeadForm({ ...leadForm, assignLead })} />
+            <label className="field">
+              <span>Owner</span>
+              <select 
+                value={leadForm.assignLead || ''} 
+                onChange={(event) => setLeadForm({ ...leadForm, assignLead: event.target.value })}
+                disabled={currentUser && !canAssignToOthers('leads')}
+              >
+                {currentUser && !canAssignToOthers('leads') ? (
+                  <option value={currentUser.id}>{currentUser.full_name || currentUser.username}</option>
+                ) : (
+                  <>
+                    <option value="">Decide Later</option>
+                    {availableUsers.map((u) => (
+                      <option key={u.id} value={u.id}>{u.full_name || u.username}</option>
+                    ))}
+                  </>
+                )}
+              </select>
+            </label>
             <label className="field wide">
               <span>Notes</span>
               <textarea rows="4" value={leadForm.notes} onChange={(event) => setLeadForm({ ...leadForm, notes: event.target.value })} />
@@ -1811,62 +2381,12 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
           </form>
         </Modal>
       )}
-      {opportunityModalOpen && (
-        <Modal title="Opportunity Details" onClose={() => setOpportunityModalOpen(false)}>
-          <form className="opportunity-form" onSubmit={saveOpportunity}>
-            <label className="field">
-              <span>Opportunity ID</span>
-              <input value={opportunityId} readOnly />
-            </label>
-            <div className="related-row">
-              <span>Related Company</span>
-              <strong>{opportunityForm.company || 'Select a company'}</strong>
-              <button type="button">Open Profile »</button>
-            </div>
-            <div className="related-row">
-              <span>Primary Contact</span>
-              <strong>{opportunityForm.contact || opportunityForm.company || 'Company'}</strong>
-              <button type="button">Open Profile »</button>
-            </div>
-            <SearchableSelect className={`field ${opportunityErrors.includes('Related Company') ? 'field-error' : ''}`} label="Related Company*" value={opportunityForm.company} options={companies.filter((item) => item !== 'All')} onChange={(company) => updateOpportunityField('company', company)} placeholder="Search company" />
-            <label className={`field ${opportunityErrors.includes('Primary Contact') ? 'field-error' : ''}`}>
-              <span>Primary Contact*</span>
-              <input value={opportunityForm.contact} onChange={(event) => updateOpportunityField('contact', event.target.value)} />
-            </label>
-            <label className={`field ${opportunityErrors.includes('Deal Amount') ? 'field-error' : ''}`}>
-              <span>Deal Amount*</span>
-              <input value={opportunityForm.value} onChange={(event) => updateOpportunityField('value', event.target.value)} />
-            </label>
-            <label className={`field ${opportunityErrors.includes('Expected Close Date') ? 'field-error' : ''}`}>
-              <span>Expected Close Date*</span>
-              <input type="date" value={opportunityForm.closeDate} onChange={(event) => updateOpportunityField('closeDate', event.target.value)} />
-            </label>
-            <label className="field">
-              <span>Probability (%)</span>
-              <input value={probability} readOnly />
-              <small>Calculated dynamically based on column stage.</small>
-            </label>
-            <SearchableSelect className={`field ${opportunityErrors.includes('Stage') ? 'field-error' : ''}`} label="Stage*" value={opportunityForm.stage} options={stageList.map((stage) => stage.name)} onChange={(stage) => updateOpportunityField('stage', stage)} placeholder="Search stage" />
-            <SearchableSelect className={`field ${opportunityErrors.includes('Assigned Salesperson') ? 'field-error' : ''}`} label="Assigned Salesperson*" value={opportunityForm.owner} options={owners.filter((item) => item !== 'All')} onChange={(owner) => updateOpportunityField('owner', owner)} placeholder="Search salesperson" />
-            <label className="field wide">
-              <span>Notes / Description</span>
-              <textarea rows="4" value={opportunityForm.notes} onChange={(event) => setOpportunityForm({ ...opportunityForm, notes: event.target.value })} />
-            </label>
-            <PanelActions wide>
-              <button type="button" className="button secondary" onClick={() => { setOpportunityModalOpen(false); setEditingOpportunityId(null); setConvertingLeadId(null); setOpportunityErrors([]); }}>Cancel</button>
-              <button type="submit" className="button primary">{editingOpportunityId ? 'Save Changes' : 'Save Opportunity'}</button>
-            </PanelActions>
-          </form>
-        </Modal>
-      )}
       {filtersOpen && (
         <Modal title="Filters" onClose={() => setFiltersOpen(false)}>
           <div className="sf-filter-popup">
             <div className="sf-filter-popup-grid">
               <SearchableSelect className="sf-filter-card" label="Owner" value={filters.owner} options={owners} onChange={(owner) => updateFilter('owner', owner)} placeholder="Search owner" />
               <SearchableSelect className="sf-filter-card" label="Company" value={filters.company} options={companies} onChange={(company) => updateFilter('company', company)} placeholder="Search company" />
-              <SearchableSelect className="sf-filter-card" label="Priority" value={filters.priority} options={priorities} onChange={(priority) => updateFilter('priority', priority)} placeholder="Search priority" />
-              <SearchableSelect className="sf-filter-card" label="Product" value={filters.product} options={products} onChange={(product) => updateFilter('product', product)} placeholder="Search product" />
             </div>
             <div className="sf-filter-links">
               <button type="button" onClick={() => setFilters({ stage: 'All', owner: 'All', company: 'All', priority: 'All', product: 'All' })}>Remove All</button>
@@ -1971,77 +2491,351 @@ export default function PipelinePage({ leads, setLeads, opportunities, setOpport
           </div>
         </Modal>
       )}
-      {customDrop && (
-        <Modal className="convert-opportunity-modal custom-opportunity-drop-modal" title={`${customDrop.stageName} Opportunity Form`} onClose={() => setCustomDrop(null)}>
-          <form className="convert-opportunity-form" onSubmit={submitCustomDrop}>
-            <section className="convert-linked-summary" aria-label="Auto-linked records summary">
-              <h4>Auto-Linked Records Summary</h4>
-              <div>
-                <span>Company to Link/Create</span>
-                <strong>{(customDrop.lead || customDrop.item)?.company || '-'}</strong>
-              </div>
-              <div>
-                <span>Contact to Link/Create</span>
-                <strong>{customDrop.lead?.customer || customDrop.item?.contact || '-'}</strong>
-              </div>
-              <div>
-                <span>Assigned Salesperson</span>
-                <strong>{(customDrop.lead || customDrop.item)?.owner || '-'}</strong>
+      {deleteStage && <Confirm danger title="Delete Stage" text={`Delete stage "${deleteStage.name}"? Stages with opportunities will prompt for card reassignment.`} confirmLabel="Delete" onCancel={() => setDeleteStage(null)} onConfirm={confirmDeleteStage} />}
+      {pendingMove && <Confirm title="Move Opportunity" text={`${pendingMove.name}: ${pendingMove.from} to ${pendingMove.to}`} confirmLabel="Move" onCancel={() => setPendingMove(null)} onConfirm={confirmMove} />}
+
+      {/* Slide-out details drawer */}
+      {activeDrawerCard && (
+        <div className="account-drawer-layer" role="presentation">
+          <button className="account-drawer-backdrop" type="button" aria-label="Close details drawer" onClick={() => { setActiveDrawerCard(null); setDrawerMode(null); }} />
+          <aside className="drawer lf-drawer" style={{ pointerEvents: 'auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <header className="lf-drawer-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e5eaf1', paddingBottom: '12px' }}>
+              <h3 className="font-weight-semibold" style={{ margin: 0, fontSize: '18px' }}>
+                {activeDrawerCard.type === 'lead' ? 'Lead Details' : 'Opportunity Details'}
+              </h3>
+              <button 
+                type="button" 
+                className="close-button" 
+                onClick={() => { setActiveDrawerCard(null); setDrawerMode(null); }}
+                style={{ border: 0, background: 'transparent', fontSize: '24px', cursor: 'pointer', color: '#64748b' }}
+              >
+                &times;
+              </button>
+            </header>
+            
+            <div className="drawer-body" style={{ flex: 1, overflowY: 'auto' }}>
+              {drawerMode === 'view' ? (
+                <div className="stack" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  {activeDrawerCard.type === 'lead' ? (
+                    <>
+                      <DetailGrid items={[
+                        ['Lead ID', activeDrawerCard.record.clientId || activeDrawerCard.record.id],
+                        ['Full Name', activeDrawerCard.record.customer],
+                        ['Company', activeDrawerCard.record.company || 'Not added'],
+                        ['Phone', activeDrawerCard.record.phone || 'Not added'],
+                        ['Email', activeDrawerCard.record.email || 'Not added'],
+                        ['Lead Source', activeDrawerCard.record.source || 'Website'],
+                        ['Priority', activeDrawerCard.record.priority || 'Medium'],
+                        ['Pipeline', pipelinesList.find(p => p.id === activeDrawerCard.record.pipeline)?.name || 'Standard Pipeline'],
+                        ['Stage', activeDrawerCard.record.status || 'New'],
+                        ['Assigned Salesperson', getOwnerName(activeDrawerCard.record.owner)],
+                      ]} />
+                      <DetailBlock title="Notes" text={activeDrawerCard.record.notes || 'No notes added.'} />
+                      {canEdit && (
+                        <PanelActions style={{ marginTop: '16px' }}>
+                          <button className="button success" onClick={() => {
+                            const lead = activeDrawerCard.record;
+                            const convStage = stageList.find(s => s.stage_type === 'CONVERSION');
+                            const stageId = convStage ? convStage.id : (lead.pipeline_stage || stageList[0]?.id);
+                            openConversionModal(lead, stageId);
+                            setActiveDrawerCard(null);
+                          }}>
+                            Convert Lead
+                          </button>
+                          <button className="button primary" onClick={() => setDrawerMode('edit')}>
+                            Edit Details
+                          </button>
+                        </PanelActions>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <DetailGrid items={[
+                        ['Opportunity ID', activeDrawerCard.record.id],
+                        ['Related Company', activeDrawerCard.record.company || 'None'],
+                        ['Primary Contact', activeDrawerCard.record.name || 'None'],
+                        ['Deal Amount', formatCurrency(activeDrawerCard.record.value || 0)],
+                        ['Expected Close Date', activeDrawerCard.record.closeDate || '-'],
+                        ['Probability', (activeDrawerCard.record.probability != null ? activeDrawerCard.record.probability : (stageProbability[activeDrawerCard.record.stage] ?? 10)) + '%'],
+                        ['Pipeline', pipelinesList.find(p => p.id === activeDrawerCard.record.pipeline)?.name || 'Standard Pipeline'],
+                        ['Stage', activeDrawerCard.record.stage || 'New'],
+                        ['Assigned Salesperson', getOwnerName(activeDrawerCard.record.owner)],
+                        ...(activeDrawerCard.record.stage.toUpperCase() === 'LOST' && activeDrawerCard.record.notes ? [['Lost Reason', activeDrawerCard.record.notes]] : []),
+                      ]} />
+                      <DetailBlock title="Notes / Description" text={activeDrawerCard.record.notes || 'No notes added.'} />
+                      {canEdit && (
+                        <PanelActions style={{ marginTop: '16px' }}>
+                          <button className="button primary" onClick={() => setDrawerMode('edit')}>
+                            Edit Details
+                          </button>
+                        </PanelActions>
+                      )}
+                    </>
+                  )}
+                </div>
+              ) : (
+                <form 
+                  className="form-grid" 
+                  style={{ display: 'grid', gap: '16px' }}
+                  onSubmit={activeDrawerCard.type === 'lead' ? saveLeadDrawer : saveOpportunityDrawer}
+                >
+                  {activeDrawerCard.type === 'lead' ? (
+                    <>
+                      <TextField label="Full Name*" value={drawerForm.customer} onChange={(val) => setDrawerForm({ ...drawerForm, customer: val })} />
+                      <TextField label="Phone Number*" value={drawerForm.phone} onChange={(val) => setDrawerForm({ ...drawerForm, phone: val })} />
+                      <TextField label="Email" value={drawerForm.email} onChange={(val) => setDrawerForm({ ...drawerForm, email: val })} />
+                      <TextField label="Company" value={drawerForm.company} onChange={(val) => setDrawerForm({ ...drawerForm, company: val })} />
+                      
+                      <SelectField 
+                        label="Lead Source" 
+                        value={drawerForm.source} 
+                        options={leadSources.filter(s => s !== 'All')} 
+                        onChange={(val) => setDrawerForm({ ...drawerForm, source: val })} 
+                      />
+                      
+                      <SelectField 
+                        label="Priority" 
+                        value={drawerForm.priority} 
+                        options={priorities.filter(p => p !== 'All')} 
+                        onChange={(val) => setDrawerForm({ ...drawerForm, priority: val })} 
+                      />
+
+                      <SelectField 
+                        label="Pipeline" 
+                        value={pipelinesList.find(p => p.id === drawerForm.pipeline)?.name || ''} 
+                        options={pipelinesList.map(p => p.name)} 
+                        onChange={async (val) => {
+                          const selectedPipe = pipelinesList.find(p => p.name === val);
+                          if (selectedPipe) {
+                            const newStages = await fetchDrawerStages(selectedPipe.id);
+                            setDrawerStages(newStages);
+                            const leadStages = newStages.filter(s => s.entity_type === 'LEAD' || s.stage_type === 'CONVERSION' || s.stage_type === 'LOST');
+                            setDrawerForm({
+                              ...drawerForm,
+                              pipeline: selectedPipe.id,
+                              pipeline_stage: leadStages[0]?.id || '',
+                            });
+                          }
+                        }} 
+                      />
+
+                      <SelectField 
+                        label="Pipeline Stage" 
+                        value={drawerStages.find(s => String(s.id) === String(drawerForm.pipeline_stage))?.name || ''} 
+                        options={drawerStages.filter(s => s.entity_type === 'LEAD' || s.stage_type === 'CONVERSION' || s.stage_type === 'LOST').map(s => s.name)} 
+                        onChange={(val) => {
+                          const selectedStage = drawerStages.find(s => s.name === val);
+                          if (selectedStage) {
+                            setDrawerForm({ ...drawerForm, pipeline_stage: selectedStage.id });
+                          }
+                        }} 
+                      />
+
+                      <SearchableSelect 
+                        label="Assigned Salesperson" 
+                        value={getOwnerName(drawerForm.owner)} 
+                        options={
+                          (currentUser && !canAssignToOthers('leads'))
+                            ? [currentUser.full_name || currentUser.username]
+                            : availableUsers.map(u => u.full_name || u.username)
+                        } 
+                        onChange={(val) => {
+                          const found = availableUsers.find(u => (u.full_name || u.username) === val);
+                          setDrawerForm({ ...drawerForm, owner: found ? found.id : '' });
+                        }}
+                        placeholder="Search salesperson" 
+                        disabled={currentUser && !canAssignToOthers('leads')}
+                      />
+
+                      <TextArea label="Notes" value={drawerForm.notes} onChange={(val) => setDrawerForm({ ...drawerForm, notes: val })} />
+                    </>
+                  ) : (
+                    <>
+                      <TextField label="Opportunity Name*" value={drawerForm.dealName} onChange={(val) => setDrawerForm({ ...drawerForm, dealName: val })} />
+                      <TextField label="Deal Amount ($)*" value={drawerForm.value} onChange={(val) => setDrawerForm({ ...drawerForm, value: val })} />
+                      <TextField type="date" label="Expected Close Date*" value={drawerForm.closeDate} onChange={(val) => setDrawerForm({ ...drawerForm, closeDate: val })} />
+
+                      <SelectField 
+                        label="Pipeline" 
+                        value={pipelinesList.find(p => p.id === drawerForm.pipeline)?.name || ''} 
+                        options={pipelinesList.map(p => p.name)} 
+                        onChange={async (val) => {
+                          const selectedPipe = pipelinesList.find(p => p.name === val);
+                          if (selectedPipe) {
+                            const newStages = await fetchDrawerStages(selectedPipe.id);
+                            setDrawerStages(newStages);
+                            const oppStages = newStages.filter(s => s.entity_type === 'OPPORTUNITY' || s.stage_type === 'CONVERSION' || s.stage_type === 'LOST');
+                            setDrawerForm({
+                              ...drawerForm,
+                              pipeline: selectedPipe.id,
+                              pipeline_stage: oppStages[0]?.id || '',
+                            });
+                          }
+                        }} 
+                      />
+
+                      <SelectField 
+                        label="Stage*" 
+                        value={drawerStages.find(s => String(s.id) === String(drawerForm.pipeline_stage))?.name || ''} 
+                        options={drawerStages.filter(s => s.entity_type === 'OPPORTUNITY' || s.stage_type === 'CONVERSION' || s.stage_type === 'LOST').map(s => s.name)} 
+                        onChange={(val) => {
+                          const selectedStage = drawerStages.find(s => s.name === val);
+                          if (selectedStage) {
+                            setDrawerForm({ ...drawerForm, pipeline_stage: selectedStage.id });
+                          }
+                        }} 
+                      />
+
+                      {drawerStages.find(s => String(s.id) === String(drawerForm.pipeline_stage))?.stage_type === 'LOST' && (
+                        <TextField label="Lost Reason*" value={drawerForm.lost_reason} onChange={(val) => setDrawerForm({ ...drawerForm, lost_reason: val })} />
+                      )}
+
+                      <SearchableSelect 
+                        label="Assigned Salesperson*" 
+                        value={getOwnerName(drawerForm.owner)} 
+                        options={
+                          (currentUser && !canAssignToOthers('opportunities'))
+                            ? [currentUser.full_name || currentUser.username]
+                            : availableUsers.map(u => u.full_name || u.username)
+                        } 
+                        onChange={(val) => {
+                          const found = availableUsers.find(u => (u.full_name || u.username) === val);
+                          setDrawerForm({ ...drawerForm, owner: found ? found.id : '' });
+                        }}
+                        placeholder="Search salesperson" 
+                        disabled={currentUser && !canAssignToOthers('opportunities')}
+                      />
+
+                      <TextArea label="Notes / Description" value={drawerForm.notes} onChange={(val) => setDrawerForm({ ...drawerForm, notes: val })} />
+                    </>
+                  )}
+                  
+                  <PanelActions wide>
+                    <button type="button" className="button secondary" onClick={() => setDrawerMode('view')}>Cancel</button>
+                    <button type="submit" className="button primary">Save Changes</button>
+                  </PanelActions>
+                </form>
+              )}
+            </div>
+          </aside>
+        </div>
+      )}
+
+      {/* Unified Lead Conversion Modal */}
+      {conversionModalOpen && (
+        <Modal 
+          className="convert-opportunity-modal" 
+          title="Convert Lead to Opportunity" 
+          onClose={() => { setConversionModalOpen(false); setConvertingLeadId(null); setConvertingLeadStageId(null); }}
+        >
+          <form className="convert-opportunity-form" onSubmit={submitConversion}>
+            <section className="convert-linked-summary" aria-label="Auto-linked records summary" style={{ background: '#f8fafc', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '6px', marginBottom: '16px' }}>
+              <h4 style={{ margin: '0 0 8px 0', fontSize: '13px', fontWeight: 'bold', color: '#475569', textTransform: 'uppercase' }}>
+                Auto-Linked Records Summary
+              </h4>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px' }}>
+                <div>
+                  <span style={{ color: '#64748b', display: 'block' }}>Company to Link/Create</span>
+                  <strong>{opportunityForm.company || '-'}</strong>
+                </div>
+                <div>
+                  <span style={{ color: '#64748b', display: 'block' }}>Contact to Link/Create</span>
+                  <strong>{opportunityForm.contact || '-'}</strong>
+                </div>
+                <div style={{ gridColumn: '1 / -1', marginTop: '4px' }}>
+                  <span style={{ color: '#64748b', display: 'block' }}>Assigned Salesperson</span>
+                  <strong>{getOwnerName(opportunityForm.owner)}</strong>
+                </div>
               </div>
             </section>
-            {customFields.map((field) => (
-              <label key={field.id} className={`field ${customErrors.includes(field.id) ? 'field-error' : ''}`}>
-                <span>{field.label}{field.required === 'Yes' ? '*' : ''}</span>
-                {renderCustomDropInput(field)}
-              </label>
-            ))}
-            {customErrors.length > 0 && <div className="custom-builder-error" role="alert">Fill all required custom fields.</div>}
+
+            <TextField label="Deal Name*" value={opportunityForm.dealName} onChange={(val) => updateOpportunityField('dealName', val)} />
+            <TextField label="Deal Amount ($)*" value={opportunityForm.value} onChange={(val) => updateOpportunityField('value', val)} />
+            <TextField type="date" label="Expected Close Date*" value={opportunityForm.closeDate} onChange={(val) => updateOpportunityField('closeDate', val)} />
+            <TextArea label="Description" value={opportunityForm.notes} onChange={(val) => updateOpportunityField('notes', val)} />
+
+            {isCustomFormActive && customFields.length > 0 && (
+              <div className="custom-fields-section" style={{ marginTop: '16px', borderTop: '1px solid #e5eaf1', paddingTop: '16px' }}>
+                <h4 style={{ margin: '0 0 12px 0', fontSize: '13px', fontWeight: 'bold', color: '#475569', textTransform: 'uppercase' }}>
+                  Custom Opportunity Information
+                </h4>
+                {customFields.map((field) => (
+                  <label key={field.id} className={`field ${customErrors.includes(field.label) ? 'field-error' : ''}`} style={{ display: 'block', marginBottom: '12px' }}>
+                    <span style={{ display: 'block', marginBottom: '4px', fontWeight: '500' }}>
+                      {field.label}{field.required ? '*' : ''}
+                    </span>
+                    {renderCustomDropInput(field)}
+                  </label>
+                ))}
+              </div>
+            )}
+
             <PanelActions wide>
-              <button type="button" className="button secondary" onClick={() => setCustomDrop(null)}>Cancel</button>
-              <button type="submit" className="button primary">Save Opportunity</button>
+              <button 
+                type="button" 
+                className="button secondary" 
+                onClick={() => { setConversionModalOpen(false); setConvertingLeadId(null); setConvertingLeadStageId(null); }}
+              >
+                Cancel
+              </button>
+              <button type="submit" className="button primary">Convert & Create Opportunity</button>
             </PanelActions>
           </form>
         </Modal>
       )}
-      {deleteStage && <Confirm danger title="Delete Stage" text={`Delete stage "${deleteStage.name}"? Stages with opportunities cannot be deleted.`} confirmLabel="Delete" onCancel={() => setDeleteStage(null)} onConfirm={confirmDeleteStage} />}
-      {pendingMove && <Confirm title="Move Opportunity" text={`${pendingMove.name}: ${pendingMove.from} to ${pendingMove.to}`} confirmLabel="Move" onCancel={() => setPendingMove(null)} onConfirm={confirmMove} />}
-      {selected && (
-        <Modal title="Opportunity Details" onClose={() => setSelected(null)}>
-          <div className="stack">
-            <DetailGrid items={[
-              ['Opportunity', selected.name],
-              ['Company', selected.company],
-              ['Contact', selected.contact],
-              ['Stage', selected.stage],
-              ['Estimated Value', formatCurrency(selected.value)],
-              ['Priority', selected.priority],
-              ['Expected Closing Date', selected.closeDate],
-              ['Assigned Salesperson', selected.owner],
-            ]} />
-            <DetailBlock title="Notes" text={selected.notes || 'No notes added.'} />
+
+      {/* Stage card reassignment modal */}
+      {reassignModalOpen && deleteStage && (
+        <Modal 
+          title="Reassign Stage Cards" 
+          onClose={() => { setReassignModalOpen(false); setDeleteStage(null); setReassignStageId(''); }}
+        >
+          <div className="stack" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <p className="modal-text">
+              Stage <strong>"{deleteStage.name}"</strong> contains active cards. Please select another stage to reassign them to:
+            </p>
+            <SelectField
+              label="Reassignment Stage Target*"
+              value={reassignStageId ? stageList.find(s => String(s.id) === String(reassignStageId))?.name || '' : ''}
+              options={stageList.filter(s => s.id !== deleteStage.id).map(s => s.name)}
+              onChange={(val) => {
+                const target = stageList.find(s => s.name === val);
+                if (target) setReassignStageId(target.id);
+              }}
+            />
             <PanelActions>
-              <button className="button secondary" onClick={() => setMessage('Note popup opened for opportunity.')}>Add Note</button>
-              <button className="button primary" onClick={() => openEditOpportunity(selected)}>Edit</button>
+              <button 
+                type="button" 
+                className="button secondary" 
+                onClick={() => { setReassignModalOpen(false); setDeleteStage(null); setReassignStageId(''); }}
+              >
+                Cancel
+              </button>
+              <button type="button" className="button primary" onClick={confirmReassignDelete}>
+                Reassign & Delete Stage
+              </button>
             </PanelActions>
           </div>
         </Modal>
       )}
-      {selectedLead && (
-        <Modal title="Lead Details" onClose={() => setSelectedLead(null)}>
-          <div className="stack">
-            <DetailGrid items={[
-              ['Client ID', selectedLead.clientId],
-              ['Customer', selectedLead.customer],
-              ['Company', selectedLead.company || 'Not added'],
-              ['Phone', selectedLead.phone],
-              ['Email', selectedLead.email || 'Not added'],
-              ['Priority', selectedLead.priority],
-              ['Owner', selectedLead.owner],
-            ]} />
-            <DetailBlock title="Notes" text={selectedLead.notes || 'No notes added.'} />
-          </div>
-        </Modal>
-      )}
+      <PipelineKanbanBoard
+        isCardEditable={isCardEditable}
+        stages={stageList}
+        leads={stageLeads}
+        opportunities={filtered}
+        dragged={dragged}
+        draggedLead={draggedLead}
+        setDragged={setDragged}
+        setDraggedLead={setDraggedLead}
+        setLeads={setLeads}
+        setOpportunities={setOpportunities}
+        moveLeadToStage={moveLeadToStage}
+        openItemOpportunityStage={openItemOpportunityStage}
+        formatCurrency={formatCurrency}
+        getOwnerName={getOwnerName}
+        setSelected={(record) => handleCardClick('opportunity', record)}
+        setSelectedLead={(record) => handleCardClick('lead', record)}
+      />
     </section>
   );
 }
@@ -2128,93 +2922,30 @@ function OpportunityStageDetailPage({ record, onBack, onEdit, stageName }) {
   );
 }
 
-function PipelineStagesPreview({ activePipeline, stages, editMode, openEditStage, openCustomStageActions, setStageFormChoice, setStageAsWon, setStageAsLost, opportunityStageId, opportunityStageMode, setDeleteStage, setDraggedStageId, moveStage }) {
-  const stageRows = stages.map((stage) => {
-    const lowerName = stage.name.toLowerCase();
-    const locked = lowerName === 'won' || lowerName === 'lost' || stage.role === 'won' || stage.role === 'lost';
-    return {
-      name: stage.name,
-      description: activePipeline.type === 'standard'
-        ? standardStageDescriptions[stage.name] || 'Pipeline stage'
-        : 'Custom pipeline stage',
-      owner: stage.owner || owners.find((item) => item !== 'All') || 'Ali Raza',
-      tone: stage.role === 'won' ? 'won' : stage.role === 'lost' ? 'lost' : lowerName.replace(/\s+/g, '-'),
-      locked,
-    };
-  });
-
-  return (
-    <section className="pipeline-stage-preview" aria-label="Standard pipeline stages">
-      <header className="pipeline-stage-preview-head">
-        <h2>{activePipeline.type === 'standard' ? 'Standard Pipeline Stages' : `${activePipeline.name} Pipeline`}</h2>
-        <div className="pipeline-stage-preview-head-actions">
-          <span>Drag stages to change priority</span>
-        </div>
-      </header>
-      <div className={`pipeline-stage-preview-column-head${editMode ? ' pipeline-stage-preview-column-head--editing' : ''}`}>
-        <span>Stage</span>
-        <span>Owner</span>
-        {editMode && <span>Actions</span>}
-      </div>
-      <div className="pipeline-stage-preview-list">
-        {stageRows.map((stage, index) => (
-          <article
-            key={stage.name}
-            className={`pipeline-stage-preview-row pipeline-stage-preview-row--${stage.tone}${stages[index].role === 'won' ? ' pipeline-stage-preview-row--won-active' : ''}${stages[index].role === 'lost' ? ' pipeline-stage-preview-row--lost-active' : ''}${opportunityStageId === stages[index].id ? ' pipeline-stage-preview-row--opportunity' : ''}${editMode ? ' pipeline-stage-preview-row--editing' : ''}`}
-            draggable={editMode}
-            onDragStart={() => editMode && setDraggedStageId(stages[index].id)}
-            onDragOver={(event) => editMode && event.preventDefault()}
-            onDrop={() => editMode && moveStage(stages[index].id)}
-          >
-            <span className="pipeline-stage-preview-index">{index + 1}</span>
-            <div className="pipeline-stage-preview-info">
-              <strong>
-                {stage.name}
-              </strong>
-              <span>{stage.description}</span>
-            </div>
-            <div className="pipeline-stage-preview-owner">
-              {stage.locked ? <Lock size={13} /> : <Users size={13} />}
-              <span>{stage.owner}</span>
-            </div>
-            {editMode && (
-              <div className="pipeline-stage-preview-actions">
-                <button type="button" className={`wide-action ${opportunityStageId === stages[index].id ? 'active' : ''}`} onClick={() => setStageFormChoice(stages[index])}>
-                  Opportunity
-                </button>
-                <button type="button" className={`wide-action ${stages[index].role === 'won' ? 'active won' : ''}`} onClick={() => setStageAsWon(stages[index])}>
-                  Won
-                </button>
-                <button type="button" className={`wide-action ${stages[index].role === 'lost' ? 'active lost' : ''}`} onClick={() => setStageAsLost(stages[index])}>
-                  Lost
-                </button>
-                <button type="button" aria-label={`Edit ${stage.name}`} onClick={() => openEditStage(stages[index])}>
-                  <Edit size={14} />
-                </button>
-                <button type="button" className="danger" aria-label={`Delete ${stage.name}`} onClick={() => setDeleteStage(stages[index])}>
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            )}
-          </article>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function PipelineKanbanBoard({ stages, leads, opportunities, dragged, draggedLead, setDragged, setDraggedLead, setLeads, setDummyPipelineLeads, setOpportunities, moveLeadToStage, openItemOpportunityStage, formatCurrency }) {
-  const firstStageName = stages[0]?.name || 'New';
-  const stageNames = new Set(stages.map((stage) => stage.name));
-  const getLeadStage = (lead) => stageNames.has(lead.status) ? lead.status : firstStageName;
-  const getOpportunityStage = (opportunity) => stageNames.has(opportunity.stage) ? opportunity.stage : firstStageName;
-
+function PipelineKanbanBoard({ 
+  isCardEditable,
+  stages, 
+  leads, 
+  opportunities, 
+  dragged, 
+  draggedLead, 
+  setDragged, 
+  setDraggedLead, 
+  setLeads, 
+  setOpportunities, 
+  moveLeadToStage, 
+  openItemOpportunityStage, 
+  formatCurrency,
+  getOwnerName,
+  setSelected,
+  setSelectedLead
+}) {
   const allowDrop = (event) => {
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
   };
 
-  const moveToStage = (stageName, event) => {
+  const moveToStage = (stageId, event) => {
     const payload = event?.dataTransfer?.getData('application/json');
     let droppedLead = draggedLead;
     let droppedOpportunity = dragged;
@@ -2229,47 +2960,54 @@ function PipelineKanbanBoard({ stages, leads, opportunities, dragged, draggedLea
           droppedOpportunity = opportunities.find((opportunity) => opportunity.id === parsed.id);
         }
       } catch {
-        // Ignore malformed drag payloads and fall back to React drag state.
+        // Ignore
       }
     }
 
     if (droppedLead) {
       if (moveLeadToStage) {
-        moveLeadToStage(droppedLead, stageName);
+        moveLeadToStage(droppedLead, stageId);
         return;
       }
-      const updateLeadStage = (lead) => (
-        lead.id === droppedLead.id ? { ...lead, status: stageName, lastActivity: `Pipeline stage: ${stageName}` } : lead
-      );
-      if (String(droppedLead.id).startsWith('DLD-')) {
-        setDummyPipelineLeads((current) => current.map(updateLeadStage));
-      } else {
-        setLeads((current) => current.map(updateLeadStage));
-      }
-      setDraggedLead(null);
-      return;
     }
     if (droppedOpportunity) {
       if (openItemOpportunityStage) {
-        openItemOpportunityStage(droppedOpportunity, stageName);
+        openItemOpportunityStage(droppedOpportunity, stageId);
         return;
       }
-      setOpportunities((current) => current.map((opportunity) => (
-        opportunity.id === droppedOpportunity.id ? { ...opportunity, stage: stageName } : opportunity
-      )));
-      setDragged(null);
     }
+  };
+
+  const getNormalizedStageClass = (stageName) => {
+    const name = (stageName || '').toLowerCase();
+    if (name.includes('new')) return 'new';
+    if (name.includes('contacted')) return 'contacted';
+    if (name.includes('follow')) return 'followup';
+    if (name.includes('qualified')) return 'qualified';
+    if (name.includes('proposal')) return 'proposal';
+    if (name.includes('negotiation')) return 'negotiation';
+    if (name.includes('won')) return 'won';
+    if (name.includes('lost')) return 'lost';
+    return 'new';
   };
 
   return (
     <section className="pipeline-kanban-board" aria-label="Pipeline stage board">
       {stages.map((stage) => {
-        const stageLeads = leads.filter((lead) => getLeadStage(lead) === stage.name);
-        const stageOpportunities = opportunities.filter((opportunity) => getOpportunityStage(opportunity) === stage.name);
+        const stageLeads = leads.filter((lead) => {
+          if (lead.pipeline_stage) return lead.pipeline_stage === stage.id;
+          return lead.status === stage.name;
+        });
+        const stageOpportunities = opportunities.filter((opportunity) => {
+          if (opportunity.pipeline_stage) return opportunity.pipeline_stage === stage.id;
+          return opportunity.stage === stage.name;
+        });
         const cards = [
           ...stageLeads.map((lead) => ({ type: 'lead', record: lead })),
           ...stageOpportunities.map((opportunity) => ({ type: 'opportunity', record: opportunity })),
         ];
+
+        const normClass = getNormalizedStageClass(stage.name);
 
         return (
           <section
@@ -2280,12 +3018,12 @@ function PipelineKanbanBoard({ stages, leads, opportunities, dragged, draggedLea
             onDrop={(event) => {
               event.preventDefault();
               event.stopPropagation();
-              moveToStage(stage.name, event);
+              moveToStage(stage.id, event);
             }}
           >
             <header className="pipeline-kanban-column-head">
-              <h3>{stage.name}</h3>
-              <span>{cards.length}</span>
+              <h3 className={`pipeline-stage-title-${normClass}`}>{stage.name}</h3>
+              <span className={`column-count-badge pipeline-stage-badge-${normClass}`}>{cards.length}</span>
             </header>
             <div
               className="pipeline-kanban-card-list"
@@ -2294,7 +3032,7 @@ function PipelineKanbanBoard({ stages, leads, opportunities, dragged, draggedLea
               onDrop={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                moveToStage(stage.name, event);
+                moveToStage(stage.id, event);
               }}
             >
               {cards.length === 0 && (
@@ -2302,47 +3040,77 @@ function PipelineKanbanBoard({ stages, leads, opportunities, dragged, draggedLea
                   Drop lead here
                 </div>
               )}
-              {cards.map(({ type, record }) => (
-                <article
-                  key={`${type}-${record.id}`}
-                  className="pipeline-kanban-card"
-                  draggable
-                  onDragStart={(event) => {
-                    event.dataTransfer.effectAllowed = 'move';
-                    event.dataTransfer.setData('text/plain', `${type}:${record.id}`);
-                    event.dataTransfer.setData('application/json', JSON.stringify({ type, id: record.id }));
-                    if (type === 'lead') {
-                      setDraggedLead(record);
-                      setDragged(null);
-                    } else {
-                      setDragged(record);
-                      setDraggedLead(null);
-                    }
-                  }}
-                >
-                  <div className="pipeline-kanban-card-top">
-                    <strong>{type === 'lead' ? record.customer : record.name}</strong>
-                    <span className={`pipeline-priority pipeline-priority--${String(record.priority || 'medium').toLowerCase()}`}>{record.priority || 'Medium'}</span>
-                  </div>
-                  <p>{record.company || 'No company added'}</p>
-                  <dl>
-                    {type === 'lead' ? (
-                      <>
-                        <div><dt>Client ID</dt><dd>{record.clientId || record.id}</dd></div>
-                        <div><dt>Phone</dt><dd>{record.phone || '-'}</dd></div>
-                        <div><dt>Owner</dt><dd>{record.owner || '-'}</dd></div>
-                      </>
-                    ) : (
-                      <>
-                        <div><dt>Contact</dt><dd>{record.contact || '-'}</dd></div>
-                        <div><dt>Value</dt><dd>{formatCurrency(record.value || 0)}</dd></div>
-                        <div><dt>Close Date</dt><dd>{record.closeDate || '-'}</dd></div>
-                        <div><dt>Salesperson</dt><dd>{record.owner || '-'}</dd></div>
-                      </>
-                    )}
-                  </dl>
-                </article>
-              ))}
+              {cards.map(({ type, record }) => {
+                const ownerName = getOwnerName ? getOwnerName(record.owner) : (record.owner || 'Unassigned');
+                const editable = isCardEditable ? isCardEditable(record, type) : true;
+                return (
+                  <article
+                    key={`${type}-${record.id}`}
+                    className={`pipeline-kanban-card ${!editable ? 'pipeline-kanban-card--locked' : ''}`}
+                    draggable={editable}
+                    onDragStart={(event) => {
+                      if (!editable) {
+                        event.preventDefault();
+                        return;
+                      }
+                      event.dataTransfer.effectAllowed = 'move';
+                      event.dataTransfer.setData('text/plain', `${type}:${record.id}`);
+                      event.dataTransfer.setData('application/json', JSON.stringify({ type, id: record.id }));
+                      if (type === 'lead') {
+                        setDraggedLead(record);
+                        setDragged(null);
+                      } else {
+                        setDragged(record);
+                        setDraggedLead(null);
+                      }
+                    }}
+                  >
+                    <div className="pipeline-card-header-row">
+                      <span className={`pipeline-card-badge pipeline-card-badge--${type}`}>
+                        {type}
+                      </span>
+                      <span className="pipeline-card-id">
+                        #{record.backendId || record.id}
+                      </span>
+                      {!editable && <span className="pipeline-card-lock-badge">🔒 Locked</span>}
+                    </div>
+
+                    <h4 
+                      className="pipeline-card-name" 
+                      onClick={() => type === 'lead' ? setSelectedLead(record) : setSelected(record)}
+                    >
+                      {type === 'lead' ? record.customer : record.name}
+                    </h4>
+
+                    <p className="pipeline-card-company">
+                      {record.company || 'No company added'}
+                    </p>
+
+                    <div className="pipeline-card-details">
+                      {type === 'lead' ? (
+                        <div className="pipeline-card-detail-line">
+                          <strong>Owner:</strong> {ownerName}
+                        </div>
+                      ) : (
+                        <>
+                          <div className="pipeline-card-detail-line">
+                            <strong>Amount:</strong> {formatCurrency(record.value || 0)}
+                          </div>
+                          <div className="pipeline-card-detail-line">
+                            <strong>Close Date:</strong> {record.closeDate || '-'}
+                          </div>
+                          <div className="pipeline-card-detail-line">
+                            <strong>Probability:</strong> {record.probability != null ? record.probability + '%' : '10%'}
+                          </div>
+                          <div className="pipeline-card-detail-line">
+                            <strong>Owner:</strong> {ownerName}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           </section>
         );
@@ -2351,69 +3119,3 @@ function PipelineKanbanBoard({ stages, leads, opportunities, dragged, draggedLea
   );
 }
 
-function PipelineStageColumn({ stage, items, leads, duplicateLeadId, dragged, draggedLead, setPendingMove, moveLeadToStage, openItemOpportunityStage, setSelected, setSelectedLead, setDragged, setDraggedLead, formatCurrency, search }) {
-  return (
-    <section
-      className="kanban-column"
-      onDragOver={(event) => event.preventDefault()}
-      onDrop={() => {
-        if (draggedLead) {
-          if (draggedLead.status === stage.name) {
-            setDraggedLead(null);
-            return;
-          }
-          moveLeadToStage(draggedLead, stage.name);
-          return;
-        }
-        if (dragged && dragged.stage !== stage.name) {
-          openItemOpportunityStage(dragged, stage.name);
-        }
-      }}
-    >
-      <header><h3>{stage.name}</h3><span>{items.length + leads.length}</span></header>
-      <div className="kanban-list">
-        {leads.map((lead) => (
-          <article
-            key={lead.id}
-            className={`opportunity-card lead-opportunity-card ${lead.id === duplicateLeadId ? 'duplicate-card' : ''}`}
-            draggable
-            onDragStart={() => { setDraggedLead(lead); setDragged(null); }}
-            onClick={() => setSelectedLead(lead)}
-          >
-            <div className="card-top">
-              <strong><HighlightedText text={lead.customer} query={search} /></strong>
-              <span className={`pill ${lead.priority.toLowerCase()}`}>{lead.priority}</span>
-            </div>
-            <p><HighlightedText text={lead.company || 'No company added'} query={search} /></p>
-            <dl>
-              <div><dt>Client ID</dt><dd><HighlightedText text={lead.clientId} query={search} /></dd></div>
-              <div><dt>Phone</dt><dd><HighlightedText text={lead.phone} query={search} /></dd></div>
-              <div><dt>Owner</dt><dd><HighlightedText text={lead.owner} query={search} /></dd></div>
-            </dl>
-          </article>
-        ))}
-        {items.map((item) => (
-          <article
-            key={item.id}
-            className="opportunity-card"
-            draggable
-            onDragStart={() => { setDragged(item); setDraggedLead(null); }}
-            onClick={() => setSelected(item)}
-          >
-            <div className="card-top">
-              <strong><HighlightedText text={item.name} query={search} /></strong>
-              <span className={`pill ${item.priority.toLowerCase()}`}>{item.priority}</span>
-            </div>
-            <p><HighlightedText text={item.company} query={search} /></p>
-            <dl>
-              <div><dt>Contact</dt><dd><HighlightedText text={item.contact} query={search} /></dd></div>
-              <div><dt>Value</dt><dd>{formatCurrency(item.value)}</dd></div>
-              <div><dt>Close Date</dt><dd><HighlightedText text={item.closeDate} query={search} /></dd></div>
-              <div><dt>Salesperson</dt><dd><HighlightedText text={item.owner} query={search} /></dd></div>
-            </dl>
-          </article>
-        ))}
-      </div>
-    </section>
-  );
-}

@@ -18,6 +18,15 @@ import {
 } from 'lucide-react';
 import { fetchCatalogBootstrap } from '../data/jts/catalogApi';
 
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
+
+function getCookie(name) {
+  return document.cookie
+    .split('; ')
+    .find((row) => row.startsWith(`${name}=`))
+    ?.split('=')[1];
+}
+
 const emptyProduct = {
   name: '',
   slug: '',
@@ -59,12 +68,20 @@ function slugPreview(value) {
 }
 
 function formatDate(value) {
-  return new Intl.DateTimeFormat('en', {
-    month: 'short',
-    day: '2-digit',
-    year: 'numeric',
-  }).format(new Date(value));
+  if (!value) return '—';
+  try {
+    const date = new Date(value);
+    if (isNaN(date.getTime())) return '—';
+    return new Intl.DateTimeFormat('en', {
+      month: 'short',
+      day: '2-digit',
+      year: 'numeric',
+    }).format(date);
+  } catch {
+    return '—';
+  }
 }
+
 
 function cycleLabel(options, value) {
   return options.billing_cycles.find((item) => item.value === value)?.label || value;
@@ -127,10 +144,10 @@ function ErrorBanner({ message, onRetry }) {
   );
 }
 
-function Toggle({ checked, onChange, label }) {
+function Toggle({ checked, onChange, label, disabled = false }) {
   return (
-    <label className="admin-toggle">
-      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+    <label className={`admin-toggle ${disabled ? 'disabled' : ''}`}>
+      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} disabled={disabled} />
       <span />
       {label && <strong>{label}</strong>}
     </label>
@@ -303,7 +320,7 @@ function Pagination({ page, totalPages, onPageChange }) {
   );
 }
 
-function paginate(rows, page, pageSize = 5) {
+function paginate(rows, page, pageSize = 20) {
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
   return {
     totalPages,
@@ -354,6 +371,7 @@ export default function CatalogAdmin({ screen, onNavigate }) {
   const [moduleForm, setModuleForm] = useState(null);
   const [planForm, setPlanForm] = useState(null);
   const [formErrors, setFormErrors] = useState({});
+  const [isSaving, setIsSaving] = useState(false);
 
   const loadCatalog = () => {
     setLoading(true);
@@ -406,22 +424,73 @@ export default function CatalogAdmin({ screen, onNavigate }) {
     onNavigate('pricing-plans');
   };
 
-  const toggleItem = (collection, id) => {
-    const current = catalog[collection].find((item) => item.id === id);
-    if (!current) return;
-    const action = current.is_active ? 'Deactivate' : 'Activate';
-    if (!window.confirm(`${action} ${current.name}?`)) return;
-    updateCatalog((state) => ({
-      [collection]: state[collection].map((item) => item.id === id ? { ...item, is_active: !item.is_active } : item),
-    }));
+  const collectionToEndpoint = {
+    products: 'products',
+    modules: 'modules',
+    pricingPlans: 'pricing-plans',
   };
 
-  const deleteItem = (collection, id) => {
+  const toggleItem = async (collection, id) => {
+    const current = catalog[collection].find((item) => item.id === id);
+    if (!current) return;
+    const action = current.is_active ? 'deactivate' : 'activate';
+    const actionLabel = current.is_active ? 'Deactivate' : 'Activate';
+    if (!window.confirm(`${actionLabel} ${current.name}?`)) return;
+
+    setLoading(true);
+    setError('');
+    try {
+      const endpoint = collectionToEndpoint[collection];
+      const csrfToken = getCookie('csrftoken');
+      const response = await fetch(`${API_BASE_URL}/api/admin/${endpoint}/${id}/${action}/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {}),
+        },
+      });
+
+      if (!response.ok) {
+        const resData = await response.json().catch(() => ({}));
+        throw new Error(resData.message || `Failed to ${action} item.`);
+      }
+
+      loadCatalog();
+    } catch (err) {
+      alert(err.message || 'Network request failed.');
+      setLoading(false);
+    }
+  };
+
+  const deleteItem = async (collection, id) => {
     const current = catalog[collection].find((item) => item.id === id);
     if (!current || !window.confirm(`Delete ${current.name}?`)) return;
-    updateCatalog((state) => ({
-      [collection]: state[collection].filter((item) => item.id !== id),
-    }));
+
+    setLoading(true);
+    setError('');
+    try {
+      const endpoint = collectionToEndpoint[collection];
+      const csrfToken = getCookie('csrftoken');
+      const response = await fetch(`${API_BASE_URL}/api/admin/${endpoint}/${id}/`, {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {}),
+        },
+      });
+
+      if (!response.ok) {
+        const resData = await response.json().catch(() => ({}));
+        throw new Error(resData.message || 'Failed to delete item.');
+      }
+
+      loadCatalog();
+    } catch (err) {
+      alert(err.message || 'Network request failed.');
+      setLoading(false);
+    }
   };
 
   const goFilteredProducts = (status = 'all') => {
@@ -439,34 +508,65 @@ export default function CatalogAdmin({ screen, onNavigate }) {
     onNavigate('pricing-plans');
   };
 
-  const saveProduct = (event) => {
+  const saveProduct = async (event) => {
     event.preventDefault();
     if (!productForm.name.trim()) {
       setFormErrors({ name: 'Name is required.' });
       return;
     }
 
-    const payload = {
-      ...productForm,
-      slug: productForm.slug || slugPreview(productForm.name),
-      updated_at: new Date().toISOString(),
-      updated_by: 'Current Admin',
-    };
+    setFormErrors({});
+    setIsSaving(true);
 
-    updateCatalog((state) => ({
-      products: payload.id
-        ? state.products.map((item) => item.id === payload.id ? payload : item)
-        : [...state.products, {
-          ...payload,
-          id: `prod_${Date.now()}`,
-          created_at: new Date().toISOString(),
-          can_delete: true,
-        }],
-    }));
-    setProductForm(null);
+    try {
+      const csrfToken = getCookie('csrftoken');
+      const formData = new FormData();
+      formData.append('name', productForm.name);
+      formData.append('slug', productForm.id ? productForm.slug : slugPreview(productForm.name));
+      formData.append('description', productForm.description || '');
+      formData.append('is_active', productForm.is_active);
+      formData.append('display_order', productForm.display_order || 0);
+
+      if (productForm.image) {
+        if (productForm.image.startsWith('data:')) {
+          const res = await fetch(productForm.image);
+          const blob = await res.blob();
+          formData.append('image', blob, 'product_image.png');
+        }
+      } else {
+        formData.append('image', '');
+      }
+
+      const method = productForm.id ? 'PATCH' : 'POST';
+      const url = productForm.id 
+        ? `${API_BASE_URL}/api/admin/products/${productForm.id}/`
+        : `${API_BASE_URL}/api/admin/products/`;
+
+      const response = await fetch(url, {
+        method,
+        credentials: 'include',
+        headers: {
+          ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {}),
+        },
+        body: formData,
+      });
+
+      const resData = await response.json();
+
+      if (!response.ok || resData.success === false) {
+        setFormErrors(resData.errors || { general: resData.message || 'Product save failed.' });
+      } else {
+        setProductForm(null);
+        loadCatalog();
+      }
+    } catch (err) {
+      setFormErrors({ general: err.message || 'Network connection failed.' });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const saveModule = (event) => {
+  const saveModule = async (event) => {
     event.preventDefault();
     const errors = {};
     if (!moduleForm.product) errors.product = 'Product is required.';
@@ -478,18 +578,39 @@ export default function CatalogAdmin({ screen, onNavigate }) {
       return;
     }
 
-    const payload = { ...moduleForm, updated_at: new Date().toISOString(), updated_by: 'Current Admin' };
-    updateCatalog((state) => ({
-      modules: payload.id
-        ? state.modules.map((item) => item.id === payload.id ? payload : item)
-        : [...state.modules, {
-          ...payload,
-          id: `mod_${Date.now()}`,
-          created_at: new Date().toISOString(),
-          can_delete: true,
-        }],
-    }));
-    setModuleForm(null);
+    setFormErrors({});
+    setIsSaving(true);
+
+    try {
+      const csrfToken = getCookie('csrftoken');
+      const method = moduleForm.id ? 'PUT' : 'POST';
+      const url = moduleForm.id
+        ? `${API_BASE_URL}/api/admin/modules/${moduleForm.id}/`
+        : `${API_BASE_URL}/api/admin/modules/`;
+
+      const response = await fetch(url, {
+        method,
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {}),
+        },
+        body: JSON.stringify(moduleForm),
+      });
+
+      const resData = await response.json();
+
+      if (!response.ok || resData.success === false) {
+        setFormErrors(resData.errors || { general: resData.message || 'Module save failed.' });
+      } else {
+        setModuleForm(null);
+        loadCatalog();
+      }
+    } catch (err) {
+      setFormErrors({ general: err.message || 'Network connection failed.' });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const validatePlan = () => {
@@ -516,7 +637,142 @@ export default function CatalogAdmin({ screen, onNavigate }) {
     return errors;
   };
 
-  const savePlan = (event) => {
+  const syncPlanModules = async (planId, desired, original) => {
+    const csrfToken = getCookie('csrftoken');
+    const originalMap = new Map(original.map((item) => [item.id, item]));
+
+    // 1. Delete removed
+    for (const orig of original) {
+      if (!desired.some((item) => item.id === orig.id)) {
+        const delRes = await fetch(`${API_BASE_URL}/api/admin/plan-modules/${orig.id}/`, {
+          method: 'DELETE',
+          credentials: 'include',
+          headers: {
+            ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {}),
+          },
+        });
+        if (!delRes.ok) {
+          const errData = await delRes.json().catch(() => ({}));
+          throw new Error(errData.message || 'Failed to remove old plan module.');
+        }
+      }
+    }
+
+    // 2. Add or Update
+    for (const des of desired) {
+      const pmPayload = {
+        plan: planId,
+        module: des.module,
+        is_enabled: des.is_enabled,
+        limit_value: des.limit_value || '',
+      };
+
+      const isNew = typeof des.id === 'string' && des.id.startsWith('pm_');
+      if (isNew) {
+        const addRes = await fetch(`${API_BASE_URL}/api/admin/plan-modules/`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {}),
+          },
+          body: JSON.stringify(pmPayload),
+        });
+        if (!addRes.ok) {
+          const errData = await addRes.json().catch(() => ({}));
+          throw new Error(errData.message || 'Failed to link new plan module.');
+        }
+      } else {
+        const orig = originalMap.get(des.id);
+        if (orig && (orig.module !== des.module || orig.is_enabled !== des.is_enabled || orig.limit_value !== des.limit_value)) {
+          const upRes = await fetch(`${API_BASE_URL}/api/admin/plan-modules/${des.id}/`, {
+            method: 'PUT',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {}),
+            },
+            body: JSON.stringify(pmPayload),
+          });
+          if (!upRes.ok) {
+            const errData = await upRes.json().catch(() => ({}));
+            throw new Error(errData.message || 'Failed to update plan module.');
+          }
+        }
+      }
+    }
+  };
+
+  const syncDiscounts = async (planId, desired, original) => {
+    const csrfToken = getCookie('csrftoken');
+    const originalMap = new Map(original.map((item) => [item.id, item]));
+
+    // 1. Delete removed
+    for (const orig of original) {
+      if (!desired.some((item) => item.id === orig.id)) {
+        const delRes = await fetch(`${API_BASE_URL}/api/admin/discounts/${orig.id}/`, {
+          method: 'DELETE',
+          credentials: 'include',
+          headers: {
+            ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {}),
+          },
+        });
+        if (!delRes.ok) {
+          const errData = await delRes.json().catch(() => ({}));
+          throw new Error(errData.message || 'Failed to remove old discount.');
+        }
+      }
+    }
+
+    // 2. Add or Update
+    for (const des of desired) {
+      const discPayload = {
+        pricing_plan: planId,
+        name: des.name,
+        discount_type: des.discount_type,
+        value: Number(des.value),
+        is_active: des.is_active,
+        start_date: des.start_date ? new Date(des.start_date).toISOString() : null,
+        end_date: des.end_date ? new Date(des.end_date).toISOString() : null,
+      };
+
+      const isNew = typeof des.id === 'string' && des.id.startsWith('disc_');
+      if (isNew) {
+        const addRes = await fetch(`${API_BASE_URL}/api/admin/discounts/`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {}),
+          },
+          body: JSON.stringify(discPayload),
+        });
+        if (!addRes.ok) {
+          const errData = await addRes.json().catch(() => ({}));
+          throw new Error(errData.message || 'Failed to create discount.');
+        }
+      } else {
+        const orig = originalMap.get(des.id);
+        if (orig && (orig.name !== des.name || orig.discount_type !== des.discount_type || Number(orig.value) !== Number(des.value) || orig.is_active !== des.is_active || orig.start_date !== des.start_date || orig.end_date !== des.end_date)) {
+          const upRes = await fetch(`${API_BASE_URL}/api/admin/discounts/${des.id}/`, {
+            method: 'PUT',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {}),
+            },
+            body: JSON.stringify(discPayload),
+          });
+          if (!upRes.ok) {
+            const errData = await upRes.json().catch(() => ({}));
+            throw new Error(errData.message || 'Failed to update discount.');
+          }
+        }
+      }
+    }
+  };
+
+  const savePlan = async (event) => {
     event.preventDefault();
     const errors = validatePlan();
     if (Object.keys(errors).length) {
@@ -524,27 +780,63 @@ export default function CatalogAdmin({ screen, onNavigate }) {
       return;
     }
 
-    const payload = {
-      ...planForm,
-      product: planForm.ownerType === 'product' ? planForm.product : null,
-      service: planForm.ownerType === 'service' ? planForm.service : null,
-      price: Number(planForm.price),
-      updated_at: new Date().toISOString(),
-      updated_by: 'Current Admin',
-    };
-    delete payload.ownerType;
+    setFormErrors({});
+    setIsSaving(true);
 
-    updateCatalog((state) => ({
-      pricingPlans: payload.id
-        ? state.pricingPlans.map((item) => item.id === payload.id ? payload : item)
-        : [...state.pricingPlans, {
-          ...payload,
-          id: `plan_${Date.now()}`,
-          created_at: new Date().toISOString(),
-          can_delete: true,
-        }],
-    }));
-    setPlanForm(null);
+    try {
+      const csrfToken = getCookie('csrftoken');
+      const corePayload = {
+        product: planForm.ownerType === 'product' ? planForm.product : null,
+        service: planForm.ownerType === 'service' ? planForm.service : null,
+        name: planForm.name,
+        price: Number(planForm.price),
+        currency: planForm.currency,
+        billing_cycle: planForm.billing_cycle,
+        is_active: planForm.is_active,
+        display_order: planForm.display_order || 0,
+      };
+
+      const isEdit = !!planForm.id;
+      const url = isEdit
+        ? `${API_BASE_URL}/api/admin/pricing-plans/${planForm.id}/`
+        : `${API_BASE_URL}/api/admin/pricing-plans/`;
+
+      const response = await fetch(url, {
+        method: isEdit ? 'PUT' : 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {}),
+        },
+        body: JSON.stringify(corePayload),
+      });
+
+      const resData = await response.json();
+
+      if (!response.ok || resData.success === false) {
+        setFormErrors(resData.errors || { general: resData.message || 'Pricing plan core save failed.' });
+        setIsSaving(false);
+        return;
+      }
+
+      const planId = resData.data.id;
+      const originalPlan = isEdit 
+        ? catalog.pricingPlans.find((item) => item.id === planForm.id)
+        : null;
+
+      const originalModules = originalPlan ? originalPlan.plan_modules : [];
+      const originalDiscounts = originalPlan ? originalPlan.discounts : [];
+
+      await syncPlanModules(planId, planForm.plan_modules, originalModules);
+      await syncDiscounts(planId, planForm.discounts, originalDiscounts);
+
+      setPlanForm(null);
+      loadCatalog();
+    } catch (err) {
+      setFormErrors({ general: err.message || 'Network connection failed.' });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   if (error) {
@@ -561,6 +853,7 @@ export default function CatalogAdmin({ screen, onNavigate }) {
         onCancel={() => setProductForm(null)}
         onSave={saveProduct}
         onManagePlans={() => goFilteredPlans('all', productForm.id)}
+        disabled={isSaving}
       />
     ) : (
       <ProductsPage
@@ -586,6 +879,7 @@ export default function CatalogAdmin({ screen, onNavigate }) {
         errors={formErrors}
         onCancel={() => setModuleForm(null)}
         onSave={saveModule}
+        disabled={isSaving}
       />
     ) : (
       <ModulesPage
@@ -615,6 +909,7 @@ export default function CatalogAdmin({ screen, onNavigate }) {
         errors={formErrors}
         onCancel={() => setPlanForm(null)}
         onSave={savePlan}
+        disabled={isSaving}
       />
     ) : (
       <PricingPlansPage
@@ -1012,7 +1307,7 @@ function RowActions({ onEdit, onToggle, onDelete, extraLabel, onExtra }) {
   );
 }
 
-function ProductForm({ form, setForm, errors, plans, onCancel, onSave, onManagePlans }) {
+function ProductForm({ form, setForm, errors, plans, onCancel, onSave, onManagePlans, disabled = false }) {
   const [preview, setPreview] = useState(form.image || '');
   const previewSlug = form.id ? form.slug : slugPreview(form.name);
 
@@ -1031,58 +1326,68 @@ function ProductForm({ form, setForm, errors, plans, onCancel, onSave, onManageP
     <form className="admin-form-page lead-form-page contact-form-page" onSubmit={onSave}>
       <div className="lead-form-page-card">
         <PageHeader title={form.id ? 'Edit Product' : 'Add Product'} description="Slug preview is read-only; final slug is set by the system." onBack={onCancel} />
+        {errors.general && (
+          <div className="admin-error" style={{ marginBottom: '20px' }}>
+            <span>{errors.general}</span>
+          </div>
+        )}
         <div className="admin-card form-grid">
-          <label className="field">Name<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><FieldError>{errors.name}</FieldError></label>
-          <label className="field">Slug<input value={previewSlug} disabled readOnly /></label>
-          <label className="field wide">Description<textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label>
+          <label className="field">Name<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} disabled={disabled} /><FieldError>{errors.name}</FieldError></label>
+          <label className="field">Slug<input value={previewSlug} disabled readOnly /><FieldError>{errors.slug}</FieldError></label>
+          <label className="field wide">Description<textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} disabled={disabled} /></label>
           <div className="field wide">
             <span>Image</span>
-            <label className="admin-upload">
+            <label className={`admin-upload ${disabled ? 'disabled' : ''}`}>
               <Upload size={16} />
               Upload Image
-              <input type="file" accept="image/*" onChange={handleImage} />
+              <input type="file" accept="image/*" onChange={handleImage} disabled={disabled} />
             </label>
             {preview ? <img className="admin-image-preview" src={preview} alt="Product preview" /> : <div className="admin-image-empty"><ImagePlus size={20} />No image selected</div>}
           </div>
-          <Toggle checked={form.is_active} onChange={(value) => setForm({ ...form, is_active: value })} label="Is Active" />
-          <label className="field">Display Order<input type="number" value={form.display_order} onChange={(event) => setForm({ ...form, display_order: Number(event.target.value) })} /></label>
+          <Toggle checked={form.is_active} onChange={(value) => setForm({ ...form, is_active: value })} label="Is Active" disabled={disabled} />
+          <label className="field">Display Order<input type="number" value={form.display_order} onChange={(event) => setForm({ ...form, display_order: Number(event.target.value) })} disabled={disabled} /></label>
         </div>
         {form.id && (
           <div className="admin-card">
             <div className="admin-section-row">
               <h3>Pricing Plans</h3>
-              <button type="button" className="admin-secondary" onClick={onManagePlans}>Manage Pricing Plans</button>
+              <button type="button" className="admin-secondary" onClick={onManagePlans} disabled={disabled}>Manage Pricing Plans</button>
             </div>
             {plans.length ? plans.map((plan) => <p key={plan.id} className="admin-summary-row">{plan.name}<StatusBadge active={plan.is_active} /></p>) : <EmptyState title="No pricing plans associated with this product." />}
           </div>
         )}
-        <FormActions submitLabel={form.id ? 'Save' : 'Create Product'} onCancel={onCancel} />
+        <FormActions submitLabel={form.id ? 'Save' : 'Create Product'} onCancel={onCancel} disabled={disabled} />
       </div>
     </form>
   );
 }
 
-function ModuleForm({ form, setForm, products, errors, onCancel, onSave }) {
+function ModuleForm({ form, setForm, products, errors, onCancel, onSave, disabled = false }) {
   return (
     <form className="admin-form-page lead-form-page contact-form-page" onSubmit={onSave}>
       <div className="lead-form-page-card">
         <PageHeader title={form.id ? 'Edit Module' : 'Add Module'} description="Product is selected from backend-loaded Products only." onBack={onCancel} />
+        {errors.general && (
+          <div className="admin-error" style={{ marginBottom: '20px' }}>
+            <span>{errors.general}</span>
+          </div>
+        )}
         <div className="admin-card form-grid">
-          <label className="field">Product<select value={form.product} onChange={(event) => setForm({ ...form, product: event.target.value })}>{products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select><FieldError>{errors.product}</FieldError></label>
-          <label className="field">Name<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><FieldError>{errors.name}</FieldError></label>
-          <label className="field">Code<input value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value })} /><FieldError>{errors.code}</FieldError></label>
-          <label className="field wide">Description<textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label>
-          <Toggle checked={form.is_active} onChange={(value) => setForm({ ...form, is_active: value })} label="Is Active" />
-          <label className="field">Display Order<input type="number" value={form.display_order} onChange={(event) => setForm({ ...form, display_order: Number(event.target.value) })} /></label>
+          <label className="field">Product<select value={form.product} onChange={(event) => setForm({ ...form, product: event.target.value })} disabled={disabled}>{products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select><FieldError>{errors.product}</FieldError></label>
+          <label className="field">Name<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} disabled={disabled} /><FieldError>{errors.name}</FieldError></label>
+          <label className="field">Code<input value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value })} disabled={disabled} /><FieldError>{errors.code}</FieldError></label>
+          <label className="field wide">Description<textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} disabled={disabled} /></label>
+          <Toggle checked={form.is_active} onChange={(value) => setForm({ ...form, is_active: value })} label="Is Active" disabled={disabled} />
+          <label className="field">Display Order<input type="number" value={form.display_order} onChange={(event) => setForm({ ...form, display_order: Number(event.target.value) })} disabled={disabled} /></label>
         </div>
-        <FormActions submitLabel={form.id ? 'Save' : 'Create Module'} onCancel={onCancel} />
+        <FormActions submitLabel={form.id ? 'Save' : 'Create Module'} onCancel={onCancel} disabled={disabled} />
       </div>
     </form>
   );
 }
 
-function PlanForm({ form, setForm, products, services, modules, options, capabilities, errors, onCancel, onSave }) {
-  const availableModules = form.ownerType === 'product' ? modules.filter((module) => module.product === form.product) : modules;
+function PlanForm({ form, setForm, products, services, modules, options, capabilities, errors, onCancel, onSave, disabled = false }) {
+  const availableModules = form.ownerType === 'product' ? modules.filter((module) => Number(module.product) === Number(form.product)) : modules;
   const addModule = () => setForm({ ...form, plan_modules: [...form.plan_modules, { id: `pm_${Date.now()}`, module: '', is_enabled: true, limit_value: '' }] });
   const addDiscount = () => setForm({ ...form, discounts: [...form.discounts, { id: `disc_${Date.now()}`, name: '', discount_type: options.discount_types[0]?.value || '', value: '', is_active: true, start_date: '', end_date: '' }] });
 
@@ -1090,36 +1395,41 @@ function PlanForm({ form, setForm, products, services, modules, options, capabil
     <form className="admin-form-page lead-form-page contact-form-page pricing-plan-form-page" onSubmit={onSave}>
       <div className="lead-form-page-card">
         <PageHeader title={form.id ? 'Edit Pricing Plan' : 'Add Pricing Plan'} description="Configure ownership, core plan details, included modules, and discounts." onBack={onCancel} />
+        {errors.general && (
+          <div className="admin-error" style={{ marginBottom: '20px' }}>
+            <span>{errors.general}</span>
+          </div>
+        )}
         <div className="admin-card form-grid">
           <div className="field wide">
             <span>Plan belongs to</span>
             <div className="admin-radio-row">
-              <label><input type="radio" checked={form.ownerType === 'product'} onChange={() => setForm({ ...form, ownerType: 'product' })} /> Product</label>
-              <label><input type="radio" checked={form.ownerType === 'service'} onChange={() => setForm({ ...form, ownerType: 'service' })} /> Service</label>
+              <label><input type="radio" checked={form.ownerType === 'product'} onChange={() => setForm({ ...form, ownerType: 'product', product: products[0]?.id || '', service: null })} disabled={disabled} /> Product</label>
+              <label><input type="radio" checked={form.ownerType === 'service'} onChange={() => setForm({ ...form, ownerType: 'service', service: services[0]?.id || '', product: null })} disabled={disabled} /> Service</label>
             </div>
             <FieldError>{errors.owner}</FieldError>
           </div>
           {form.ownerType === 'product' ? (
-            <label className="field">Product<select value={form.product} onChange={(event) => setForm({ ...form, product: event.target.value })}>{products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></label>
+            <label className="field">Product<select value={form.product} onChange={(event) => setForm({ ...form, product: event.target.value })} disabled={disabled}>{products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></label>
           ) : (
-            <label className="field">Service<select value={form.service} onChange={(event) => setForm({ ...form, service: event.target.value })}>{services.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}</select></label>
+            <label className="field">Service<select value={form.service} onChange={(event) => setForm({ ...form, service: event.target.value })} disabled={disabled}>{services.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}</select></label>
           )}
-          <label className="field">Name<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><FieldError>{errors.name}</FieldError></label>
-          <label className="field">Price<input type="number" min="0" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} /><FieldError>{errors.price}</FieldError></label>
-          <label className="field">Currency<select value={form.currency} onChange={(event) => setForm({ ...form, currency: event.target.value })}>{options.currencies.map((currency) => <option key={currency} value={currency}>{currency}</option>)}</select><FieldError>{errors.currency}</FieldError></label>
-          <label className="field">Billing Cycle<select value={form.billing_cycle} onChange={(event) => setForm({ ...form, billing_cycle: event.target.value })}>{options.billing_cycles.map((cycle) => <option key={cycle.value} value={cycle.value}>{cycle.label}</option>)}</select><FieldError>{errors.billing_cycle}</FieldError></label>
-          <Toggle checked={form.is_active} onChange={(value) => setForm({ ...form, is_active: value })} label="Is Active" />
-          <label className="field">Display Order<input type="number" value={form.display_order} onChange={(event) => setForm({ ...form, display_order: Number(event.target.value) })} /></label>
+          <label className="field">Name<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} disabled={disabled} /><FieldError>{errors.name}</FieldError></label>
+          <label className="field">Price<input type="number" min="0" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} disabled={disabled} /><FieldError>{errors.price}</FieldError></label>
+          <label className="field">Currency<select value={form.currency} onChange={(event) => setForm({ ...form, currency: event.target.value })} disabled={disabled}>{options.currencies.map((currency) => <option key={currency} value={currency}>{currency}</option>)}</select><FieldError>{errors.currency}</FieldError></label>
+          <label className="field">Billing Cycle<select value={form.billing_cycle} onChange={(event) => setForm({ ...form, billing_cycle: event.target.value })} disabled={disabled}>{options.billing_cycles.map((cycle) => <option key={cycle.value} value={cycle.value}>{cycle.label}</option>)}</select><FieldError>{errors.billing_cycle}</FieldError></label>
+          <Toggle checked={form.is_active} onChange={(value) => setForm({ ...form, is_active: value })} label="Is Active" disabled={disabled} />
+          <label className="field">Display Order<input type="number" value={form.display_order} onChange={(event) => setForm({ ...form, display_order: Number(event.target.value) })} disabled={disabled} /></label>
         </div>
-        <NestedModules form={form} setForm={setForm} modules={availableModules} errors={errors} addModule={addModule} />
-        {capabilities.supportsDiscounts && <NestedDiscounts form={form} setForm={setForm} options={options} errors={errors} addDiscount={addDiscount} />}
-        <FormActions submitLabel={form.id ? 'Save' : 'Create Pricing Plan'} onCancel={onCancel} />
+        <NestedModules form={form} setForm={setForm} modules={availableModules} errors={errors} addModule={addModule} disabled={disabled} />
+        {capabilities.supportsDiscounts && <NestedDiscounts form={form} setForm={setForm} options={options} errors={errors} addDiscount={addDiscount} disabled={disabled} />}
+        <FormActions submitLabel={form.id ? 'Save' : 'Create Pricing Plan'} onCancel={onCancel} disabled={disabled} />
       </div>
     </form>
   );
 }
 
-function NestedModules({ form, setForm, modules, errors, addModule }) {
+function NestedModules({ form, setForm, modules, errors, addModule, disabled = false }) {
   const updateRow = (index, patch) => {
     const plan_modules = form.plan_modules.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row);
     setForm({ ...form, plan_modules });
@@ -1128,15 +1438,15 @@ function NestedModules({ form, setForm, modules, errors, addModule }) {
 
   return (
     <div className="admin-card">
-      <div className="admin-section-row"><h3>Plan Modules</h3><button type="button" className="admin-secondary" onClick={addModule}>+ Add Module</button></div>
+      <div className="admin-section-row"><h3>Plan Modules</h3><button type="button" className="admin-secondary" onClick={addModule} disabled={disabled}>+ Add Module</button></div>
       <FieldError>{errors.plan_modules}</FieldError>
       <div className="admin-repeat-list">
         {form.plan_modules.map((row, index) => (
           <div className="admin-repeat-row" key={row.id || index}>
-            <label className="field">Module<select value={row.module} onChange={(event) => updateRow(index, { module: event.target.value })}><option value="">Select Module</option>{modules.map((module) => <option key={module.id} value={module.id}>{module.name}</option>)}</select></label>
-            <Toggle checked={row.is_enabled} onChange={(value) => updateRow(index, { is_enabled: value })} label="Is Enabled" />
-            <label className="field">Limit Value<input value={row.limit_value} onChange={(event) => updateRow(index, { limit_value: event.target.value })} /></label>
-            <button type="button" className="admin-secondary" onClick={() => removeRow(index)}>Remove</button>
+            <label className="field">Module<select value={row.module} onChange={(event) => updateRow(index, { module: event.target.value })} disabled={disabled}><option value="">Select Module</option>{modules.map((module) => <option key={module.id} value={module.id}>{module.name}</option>)}</select></label>
+            <Toggle checked={row.is_enabled} onChange={(value) => updateRow(index, { is_enabled: value })} label="Is Enabled" disabled={disabled} />
+            <label className="field">Limit Value<input value={row.limit_value} onChange={(event) => updateRow(index, { limit_value: event.target.value })} disabled={disabled} /></label>
+            <button type="button" className="admin-secondary" onClick={() => removeRow(index)} disabled={disabled}>Remove</button>
           </div>
         ))}
         {form.plan_modules.length === 0 && <EmptyState title="No plan modules added." />}
@@ -1145,7 +1455,7 @@ function NestedModules({ form, setForm, modules, errors, addModule }) {
   );
 }
 
-function NestedDiscounts({ form, setForm, options, errors, addDiscount }) {
+function NestedDiscounts({ form, setForm, options, errors, addDiscount, disabled = false }) {
   const updateRow = (index, patch) => {
     const discounts = form.discounts.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row);
     setForm({ ...form, discounts });
@@ -1154,17 +1464,17 @@ function NestedDiscounts({ form, setForm, options, errors, addDiscount }) {
 
   return (
     <div className="admin-card">
-      <div className="admin-section-row"><h3>Discounts</h3><button type="button" className="admin-secondary" onClick={addDiscount}>+ Add Discount</button></div>
+      <div className="admin-section-row"><h3>Discounts</h3><button type="button" className="admin-secondary" onClick={addDiscount} disabled={disabled}>+ Add Discount</button></div>
       <div className="admin-repeat-list">
         {form.discounts.map((row, index) => (
           <div className="admin-discount-row" key={row.id || index}>
-            <label className="field">Name<input value={row.name} onChange={(event) => updateRow(index, { name: event.target.value })} /><FieldError>{errors[`discount_${index}_name`]}</FieldError></label>
-            <label className="field">Discount Type<select value={row.discount_type} onChange={(event) => updateRow(index, { discount_type: event.target.value })}>{options.discount_types.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}</select></label>
-            <label className="field">Value<input type="number" value={row.value} onChange={(event) => updateRow(index, { value: event.target.value })} /></label>
-            <Toggle checked={row.is_active} onChange={(value) => updateRow(index, { is_active: value })} label="Is Active" />
-            <label className="field">Start Date<input type="date" value={row.start_date} onChange={(event) => updateRow(index, { start_date: event.target.value })} /></label>
-            <label className="field">End Date<input type="date" value={row.end_date} onChange={(event) => updateRow(index, { end_date: event.target.value })} /><FieldError>{errors[`discount_${index}_end_date`]}</FieldError></label>
-            <button type="button" className="admin-secondary" onClick={() => removeRow(index)}>Remove</button>
+            <label className="field">Name<input value={row.name} onChange={(event) => updateRow(index, { name: event.target.value })} disabled={disabled} /><FieldError>{errors[`discount_${index}_name`]}</FieldError></label>
+            <label className="field">Discount Type<select value={row.discount_type} onChange={(event) => updateRow(index, { discount_type: event.target.value })} disabled={disabled}>{options.discount_types.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}</select></label>
+            <label className="field">Value<input type="number" value={row.value} onChange={(event) => updateRow(index, { value: event.target.value })} disabled={disabled} /></label>
+            <Toggle checked={row.is_active} onChange={(value) => updateRow(index, { is_active: value })} label="Is Active" disabled={disabled} />
+            <label className="field">Start Date<input type="date" value={row.start_date ? row.start_date.split('T')[0] : ''} onChange={(event) => updateRow(index, { start_date: event.target.value })} disabled={disabled} /></label>
+            <label className="field">End Date<input type="date" value={row.end_date ? row.end_date.split('T')[0] : ''} onChange={(event) => updateRow(index, { end_date: event.target.value })} disabled={disabled} /><FieldError>{errors[`discount_${index}_end_date`]}</FieldError></label>
+            <button type="button" className="admin-secondary" onClick={() => removeRow(index)} disabled={disabled}>Remove</button>
           </div>
         ))}
         {form.discounts.length === 0 && <EmptyState title="No discounts added." />}
@@ -1173,11 +1483,11 @@ function NestedDiscounts({ form, setForm, options, errors, addDiscount }) {
   );
 }
 
-function FormActions({ submitLabel, onCancel }) {
+function FormActions({ submitLabel, onCancel, disabled = false }) {
   return (
     <div className="admin-form-actions">
-      <button type="button" className="admin-secondary" onClick={onCancel}>Cancel</button>
-      <button type="submit" className="admin-primary">{submitLabel}</button>
+      <button type="button" className="admin-secondary" onClick={onCancel} disabled={disabled}>Cancel</button>
+      <button type="submit" className="admin-primary" disabled={disabled}>{disabled ? 'Saving...' : submitLabel}</button>
     </div>
   );
 }

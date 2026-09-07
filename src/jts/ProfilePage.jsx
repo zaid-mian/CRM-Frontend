@@ -8,14 +8,24 @@ import {
     Phone,
     Trash2,
     UserRound,
+    MapPin,
+    ShieldCheck,
 } from 'lucide-react';
 
-import { fetchUserDashboard } from '../data/jts/userDashboardApi';
 import {
     PrimaryButton,
     SecondaryButton,
     TextInput,
 } from './ui';
+
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
+
+function getCookie(name) {
+    return document.cookie
+        .split('; ')
+        .find((row) => row.startsWith(`${name}=`))
+        ?.split('=')[1];
+}
 
 const profileFields = [
     {
@@ -38,6 +48,16 @@ const profileFields = [
         label: 'Phone Number',
         icon: Phone,
     },
+    {
+        key: 'address',
+        label: 'Address',
+        icon: MapPin,
+    },
+    {
+        key: 'cnic',
+        label: 'CNIC',
+        icon: ShieldCheck,
+    },
 ];
 
 function getInitials(name = '') {
@@ -59,13 +79,16 @@ function getInitials(name = '') {
 
 export default function ProfilePage({
     profile: sharedProfile,
-    onProfileUpdate,
+    setCurrentUser,
     onBack,
 }) {
     const [profile, setProfile] = useState(sharedProfile);
     const [form, setForm] = useState(sharedProfile);
     const [editing, setEditing] = useState(false);
     const [loading, setLoading] = useState(!sharedProfile);
+    const [isSaving, setIsSaving] = useState(false);
+    const [errors, setErrors] = useState({});
+    const [generalError, setGeneralError] = useState('');
 
     const fileInputRef = useRef(null);
 
@@ -74,28 +97,8 @@ export default function ProfilePage({
             setProfile(sharedProfile);
             setForm(sharedProfile);
             setLoading(false);
-            return;
         }
-
-        setLoading(true);
-
-        fetchUserDashboard()
-            .then((data) => {
-                const user = data?.user;
-
-                if (!user) return;
-
-                setProfile(user);
-                setForm(user);
-                onProfileUpdate?.(user);
-            })
-            .catch((error) => {
-                console.error('Failed to load profile:', error);
-            })
-            .finally(() => {
-                setLoading(false);
-            });
-    }, [sharedProfile, onProfileUpdate]);
+    }, [sharedProfile]);
 
     if (loading) {
         return (
@@ -121,7 +124,8 @@ export default function ProfilePage({
         setForm({
             ...profile,
         });
-
+        setErrors({});
+        setGeneralError('');
         setEditing(true);
     };
 
@@ -129,7 +133,8 @@ export default function ProfilePage({
         setForm({
             ...profile,
         });
-
+        setErrors({});
+        setGeneralError('');
         setEditing(false);
     };
 
@@ -180,26 +185,71 @@ export default function ProfilePage({
         }));
     };
 
-    const saveProfile = (event) => {
+    const saveProfile = async (event) => {
         event.preventDefault();
+        setErrors({});
+        setGeneralError('');
+        setIsSaving(true);
 
-        const nextProfile = {
-            ...profile,
+        const nameParts = (form.name || '').trim().split(/\s+/);
+        const firstName = nameParts[0] || '';
+        const lastName = nameParts.slice(1).join(' ') || '';
 
-            name: form?.name?.trim() || '',
-            email: form?.email?.trim() || '',
-            organization: form?.organization?.trim() || '',
-            phone: form?.phone?.trim() || '',
-
-            profileImage: form?.profileImage || null,
+        const payload = {
+            first_name: firstName,
+            last_name: lastName,
+            phone_number: (form.phone || '').trim(),
+            address: (form.address || '').trim()
         };
 
-        setProfile(nextProfile);
-        setForm(nextProfile);
+        try {
+            const csrfToken = getCookie('csrftoken');
+            const response = await fetch(`${API_BASE_URL}/api/me/`, {
+                method: 'PATCH',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {}),
+                },
+                body: JSON.stringify(payload)
+            });
 
-        onProfileUpdate?.(nextProfile);
+            const resData = await response.json();
 
-        setEditing(false);
+            if (!response.ok || resData.success === false) {
+                if (resData.errors) {
+                    setErrors(resData.errors);
+                }
+                setGeneralError(resData.message || 'Profile update failed.');
+            } else {
+                // Refresh global session
+                const meRes = await fetch(`${API_BASE_URL}/api/me/`, {
+                    credentials: 'include'
+                });
+                const meData = await meRes.json();
+                if (meData.success && meData.data) {
+                    const userBackendData = meData.data;
+                    setCurrentUser({
+                        id: userBackendData.id,
+                        username: userBackendData.username,
+                        email: userBackendData.email,
+                        first_name: userBackendData.first_name,
+                        last_name: userBackendData.last_name,
+                        is_staff: userBackendData.is_staff,
+                        is_superuser: userBackendData.is_superuser,
+                        user_type: (userBackendData.is_superuser || userBackendData.is_staff) ? 'ADMIN' : 'USER',
+                        profile: userBackendData.profile,
+                        role: userBackendData.role || null,
+                        permissions: userBackendData.permissions || {}
+                    });
+                }
+                setEditing(false);
+            }
+        } catch (err) {
+            setGeneralError(err.message || 'Network connection failed.');
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     if (editing) {
@@ -224,6 +274,7 @@ export default function ProfilePage({
                                 className="lead-form-back"
                                 aria-label="Back to profile"
                                 onClick={cancelEditor}
+                                disabled={isSaving}
                             >
                                 <ArrowLeft size={20} />
                             </button>
@@ -281,12 +332,14 @@ export default function ProfilePage({
                                     accept="image/png,image/jpeg,image/webp"
                                     onChange={handleProfileImageChange}
                                     hidden
+                                    disabled={isSaving}
                                 />
 
                                 <button
                                     type="button"
                                     className="profile-photo-upload"
                                     onClick={openProfileImagePicker}
+                                    disabled={isSaving}
                                 >
                                     <Camera size={16} />
 
@@ -300,6 +353,7 @@ export default function ProfilePage({
                                         type="button"
                                         className="profile-photo-remove"
                                         onClick={removeProfileImage}
+                                        disabled={isSaving}
                                     >
                                         <Trash2 size={16} />
                                         Remove
@@ -311,42 +365,94 @@ export default function ProfilePage({
                         </section>
 
 
+                        {generalError && (
+                            <div style={{
+                                backgroundColor: '#fef2f2',
+                                border: '1px solid #fecaca',
+                                color: '#dc2626',
+                                padding: '12px 16px',
+                                borderRadius: '12px',
+                                fontSize: '13px',
+                                fontWeight: '500',
+                                marginBottom: '20px'
+                            }} role="alert">
+                                {generalError}
+                            </div>
+                        )}
+
                         <div className="admin-card form-grid">
 
-                            <TextInput
-                                label="Full Name"
-                                value={form?.name || ''}
-                                onChange={(value) =>
-                                    updateField('name', value)
-                                }
-                                required
-                            />
+                            <div>
+                                <TextInput
+                                    label="Full Name"
+                                    value={form?.name || ''}
+                                    onChange={(value) =>
+                                        updateField('name', value)
+                                    }
+                                    required
+                                    disabled={isSaving}
+                                />
+                                <FieldError message={errors.first_name || errors.last_name} />
+                            </div>
 
-                            <TextInput
-                                label="Email Address"
-                                type="email"
-                                value={form?.email || ''}
-                                onChange={(value) =>
-                                    updateField('email', value)
-                                }
-                                required
-                            />
+                            <div>
+                                <TextInput
+                                    label="Email Address"
+                                    type="email"
+                                    value={form?.email || ''}
+                                    onChange={(value) =>
+                                        updateField('email', value)
+                                    }
+                                    required
+                                    disabled={true}
+                                />
+                            </div>
 
-                            <TextInput
-                                label="Organization"
-                                value={form?.organization || ''}
-                                onChange={(value) =>
-                                    updateField('organization', value)
-                                }
-                            />
+                            <div>
+                                <TextInput
+                                    label="Organization"
+                                    value={form?.organization || ''}
+                                    onChange={(value) =>
+                                        updateField('organization', value)
+                                    }
+                                    disabled={true}
+                                />
+                            </div>
 
-                            <TextInput
-                                label="Phone Number"
-                                value={form?.phone || ''}
-                                onChange={(value) =>
-                                    updateField('phone', value)
-                                }
-                            />
+                            <div>
+                                <TextInput
+                                    label="Phone Number"
+                                    value={form?.phone || ''}
+                                    onChange={(value) =>
+                                        updateField('phone', value)
+                                    }
+                                    disabled={isSaving}
+                                />
+                                <FieldError message={errors.phone_number} />
+                            </div>
+
+                            <div className="wide" style={{ gridColumn: 'span 2' }}>
+                                <TextInput
+                                    label="Address"
+                                    value={form?.address || ''}
+                                    onChange={(value) =>
+                                        updateField('address', value)
+                                    }
+                                    disabled={isSaving}
+                                />
+                                <FieldError message={errors.address} />
+                            </div>
+
+                            <div>
+                                <TextInput
+                                    label="CNIC"
+                                    value={form?.cnic || ''}
+                                    onChange={(value) =>
+                                        updateField('cnic', value)
+                                    }
+                                    disabled={true}
+                                />
+                            </div>
 
                         </div>
 
@@ -356,12 +462,13 @@ export default function ProfilePage({
                             <SecondaryButton
                                 type="button"
                                 onClick={cancelEditor}
+                                disabled={isSaving}
                             >
                                 Cancel
                             </SecondaryButton>
 
-                            <PrimaryButton type="submit">
-                                Save Changes
+                            <PrimaryButton type="submit" disabled={isSaving}>
+                                {isSaving ? 'Saving...' : 'Save Changes'}
                             </PrimaryButton>
 
                         </div>
@@ -508,4 +615,12 @@ export default function ProfilePage({
 
         </section>
     );
+}
+
+function FieldError({ message }) {
+  return message ? (
+    <span style={{ color: '#dc2626', fontSize: '11px', marginTop: '4px', display: 'block' }}>
+      {Array.isArray(message) ? message[0] : message}
+    </span>
+  ) : null;
 }

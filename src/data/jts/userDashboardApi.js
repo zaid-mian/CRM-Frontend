@@ -1,34 +1,29 @@
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
+
 export async function fetchUserDashboard() {
-    return new Promise((resolve) => {
-        window.setTimeout(() => {
-            resolve({
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/me/`, {
+            credentials: 'include'
+        });
+        const resData = await response.json();
+        if (resData.success && resData.data) {
+            const userData = resData.data;
+            const profile = userData.profile || {};
+            const org = profile.organization || {};
+            
+            return {
                 user: {
-                    name: 'Zaid',
-                    organization: 'JTS Corp',
-                    email: 'zaid@jts.com',
-                    phone: '+1 234 567 890',
+                    name: `${userData.first_name || ''} ${userData.last_name || ''}`.trim() || userData.username,
+                    organization: org.name || '',
+                    email: userData.email,
+                    phone: profile.phone_number || '',
                 },
-                subscriptions: [
-                    {
-                        id: 'sub-1',
-                        product: 'Sales CRM',
-                        hasCrm: true,
-                        pricingPlan: 'Professional',
-                        status: 'Active',
-                        startDate: 'Jan 15, 2024',
-                        renewalDate: 'Jan 15, 2025',
-                    },
-                    {
-                        id: 'sub-2',
-                        product: 'Marketing Automation',
-                        hasCrm: false,
-                        pricingPlan: 'Basic',
-                        status: 'Active',
-                        startDate: 'Mar 01, 2024',
-                        renewalDate: 'Mar 01, 2025',
-                    },
-                ],
-            });
-        }, 180);
-    });
+                subscriptions: userData.subscriptions || [],
+            };
+        }
+        throw new Error(resData.message || 'Failed to fetch dashboard data.');
+    } catch (err) {
+        console.error('fetchUserDashboard error:', err);
+        throw err;
+    }
 }

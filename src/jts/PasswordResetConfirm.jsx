@@ -2,19 +2,9 @@ import React, { useState } from 'react';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
 
-function getCookie(name) {
-    return document.cookie
-        .split('; ')
-        .find((row) => row.startsWith(`${name}=`))
-        ?.split('=')[1];
-}
-
-export default function ChangePassword({ onComplete }) {
-    const [passwords, setPasswords] = useState({
-        currentPassword: '',
-        newPassword: '',
-        confirmNewPassword: ''
-    });
+export default function PasswordResetConfirm({ uidb64, token, onBackToLogin }) {
+    const [newPassword, setNewPassword] = useState('');
+    const [confirmPassword, setConfirmPassword] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [errors, setErrors] = useState({});
     const [generalError, setGeneralError] = useState('');
@@ -25,12 +15,12 @@ export default function ChangePassword({ onComplete }) {
         setErrors({});
         setGeneralError('');
 
-        if (passwords.newPassword !== passwords.confirmNewPassword) {
-            setGeneralError("New passwords do not match.");
+        if (newPassword !== confirmPassword) {
+            setGeneralError("Passwords do not match.");
             return;
         }
 
-        if (passwords.newPassword.length < 8) {
+        if (newPassword.length < 8) {
             setGeneralError("Password must be at least 8 characters.");
             return;
         }
@@ -38,19 +28,17 @@ export default function ChangePassword({ onComplete }) {
         setIsSubmitting(true);
 
         const payload = {
-            current_password: passwords.currentPassword,
-            new_password: passwords.newPassword,
-            confirm_new_password: passwords.confirmNewPassword
+            uidb64,
+            token,
+            new_password: newPassword,
+            confirm_password: confirmPassword
         };
 
         try {
-            const csrfToken = getCookie('csrftoken');
-            const response = await fetch(`${API_BASE_URL}/api/auth/change-password/`, {
+            const response = await fetch(`${API_BASE_URL}/api/auth/reset-password/confirm/`, {
                 method: 'POST',
-                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {}),
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(payload)
             });
@@ -60,17 +48,12 @@ export default function ChangePassword({ onComplete }) {
             if (!response.ok || responseData.success === false) {
                 if (responseData.errors) {
                     setErrors(responseData.errors);
-                    setGeneralError(responseData.message || "Password update validation failed.");
+                    setGeneralError(responseData.message || "Password reset validation failed.");
                 } else {
-                    setGeneralError(responseData.message || "Failed to change password.");
+                    setGeneralError(responseData.message || "Failed to reset password.");
                 }
             } else {
                 setIsSuccess(true);
-                setPasswords({
-                    currentPassword: '',
-                    newPassword: '',
-                    confirmNewPassword: ''
-                });
             }
         } catch (err) {
             setGeneralError("Network connection failed.");
@@ -81,17 +64,17 @@ export default function ChangePassword({ onComplete }) {
 
     if (isSuccess) {
         return (
-            <div className="max-w-md mx-auto my-16 bg-slate-900 border border-slate-800 rounded-2xl p-8 space-y-6 text-slate-100 text-center">
-                <div className="text-3xl">✅</div>
-                <h4 className="text-2xl font-bold tracking-tight text-white">Password Changed</h4>
-                <p className="text-sm text-emerald-400 font-medium">Your password was changed successfully!</p>
-                <p className="text-xs text-slate-400">Your active portal session remains authenticated.</p>
+            <div className="max-w-xl mx-auto my-16 bg-slate-900 border border-slate-800 rounded-2xl p-8 space-y-6 text-slate-100 text-center">
+                <div className="text-3xl">🔑</div>
+                <h4 className="text-2xl font-bold tracking-tight text-white">Password Updated</h4>
+                <p className="text-sm text-emerald-400 font-medium">Your password has been successfully reset!</p>
+                <p className="text-xs text-slate-400">You can now proceed to log in to your account with your new password.</p>
                 <div className="pt-4">
                     <button
-                        onClick={onComplete}
-                        className="px-6 py-2.5 bg-teal-500 hover:bg-teal-400 text-slate-950 rounded-xl font-bold transition text-sm cursor-pointer"
+                        onClick={onBackToLogin}
+                        className="px-6 py-2.5 bg-teal-500 hover:bg-teal-400 text-slate-950 rounded-xl font-bold transition text-sm"
                     >
-                        Return to Profile
+                        Go to Login Page
                     </button>
                 </div>
             </div>
@@ -99,28 +82,13 @@ export default function ChangePassword({ onComplete }) {
     }
 
     return (
-        <div className="max-w-md mx-auto my-16 bg-slate-900 border border-slate-800 rounded-2xl p-8 space-y-6 text-slate-100">
+        <div className="max-w-xl mx-auto my-16 bg-slate-900 border border-slate-800 rounded-2xl p-8 space-y-6 text-slate-100">
             <div className="text-center space-y-2">
-                <h4 className="text-2xl font-bold tracking-tight text-white">Change Password</h4>
-                <p className="text-xs text-slate-400">Update credentials to secure your active portal session</p>
+                <h4 className="text-2xl font-bold tracking-tight text-white">Reset Password</h4>
+                <p className="text-xs text-slate-400">Specify your secure new password</p>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
-                <div>
-                    <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-                        Current Password
-                    </label>
-                    <input
-                        required
-                        type="password"
-                        value={passwords.currentPassword}
-                        onChange={(e) => setPasswords({ ...passwords, currentPassword: e.target.value })}
-                        className="w-full bg-slate-950 border border-slate-800 focus:border-teal-500 rounded-xl px-4 py-2.5 text-sm text-slate-100 outline-none transition"
-                        placeholder="••••••••"
-                        disabled={isSubmitting}
-                    />
-                </div>
-
                 <div>
                     <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
                         New Password
@@ -128,10 +96,10 @@ export default function ChangePassword({ onComplete }) {
                     <input
                         required
                         type="password"
-                        value={passwords.newPassword}
-                        onChange={(e) => setPasswords({ ...passwords, newPassword: e.target.value })}
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
                         className={`w-full bg-slate-950 border focus:border-teal-500 rounded-xl px-4 py-2.5 text-sm text-slate-100 outline-none transition ${errors.new_password ? 'border-red-500' : 'border-slate-800'}`}
-                        placeholder="Minimum 8 characters"
+                        placeholder="••••••••"
                         disabled={isSubmitting}
                     />
                     {errors.new_password && (
@@ -150,8 +118,8 @@ export default function ChangePassword({ onComplete }) {
                     <input
                         required
                         type="password"
-                        value={passwords.confirmNewPassword}
-                        onChange={(e) => setPasswords({ ...passwords, confirmNewPassword: e.target.value })}
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
                         className="w-full bg-slate-950 border border-slate-800 focus:border-teal-500 rounded-xl px-4 py-2.5 text-sm text-slate-100 outline-none transition"
                         placeholder="••••••••"
                         disabled={isSubmitting}
@@ -177,9 +145,18 @@ export default function ChangePassword({ onComplete }) {
                     disabled={isSubmitting}
                     className="w-full py-3 bg-teal-500 hover:bg-teal-400 text-slate-950 rounded-xl font-bold transition text-sm shadow-lg shadow-teal-500/10 cursor-pointer disabled:opacity-50"
                 >
-                    {isSubmitting ? 'Confirming Password Change...' : 'Confirm Password Change'}
+                    {isSubmitting ? 'Confirming Reset...' : 'Confirm Reset Password'}
                 </button>
             </form>
+
+            <div className="text-center">
+                <button
+                    onClick={onBackToLogin}
+                    className="text-xs text-slate-400 hover:text-teal-400 transition cursor-pointer"
+                >
+                    ← Return to Login Page
+                </button>
+            </div>
         </div>
     );
 }

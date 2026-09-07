@@ -1,6 +1,32 @@
-import React, { useMemo, useState } from 'react';
-import { ArrowLeft, Check, ChevronDown, Edit3, PlusCircle, Trash2, X } from 'lucide-react';
+import React, { useMemo, useState, useEffect } from 'react';
+import {
+  ArrowLeft,
+  Check,
+  ChevronDown,
+  Edit3,
+  PlusCircle,
+  Trash2,
+  X,
+  Phone,
+  Mail,
+  Send,
+  Building2,
+  User,
+  Briefcase,
+  Clock,
+  Activity,
+  FileText,
+  Calendar,
+  MapPin,
+  ExternalLink,
+  Plus,
+  DollarSign,
+  MessageSquare,
+  Globe,
+} from 'lucide-react';
 import { contactStatuses, owners } from '../data/crmData';
+import { authRequest, apiGet } from '../App';
+import { contactBackendToUi, contactUiToBackend, companyBackendToUi, companyUiToBackend } from '../utils/adapters';
 
 const contactColumns = [
   ['contactId', 'Contact ID', 'link-cell'],
@@ -14,11 +40,7 @@ const contactColumns = [
   ['status', 'Status'],
 ];
 
-const dummyContacts = [
-  { id: 'CT-D001', contactId: 'CT-000041', date: '2026-07-24', contact: 'Sophia Bennett', company: 'Northstar Digital', designation: 'VP Operations', phone: '+1 (415) 555-0138', email: 'sophia@northstardigital.com', owner: 'Ali Raza', status: 'Active' },
-  { id: 'CT-D002', contactId: 'CT-000039', date: '2026-07-23', contact: 'Ethan Carter', company: 'Carter Logistics', designation: 'Founder', phone: '+1 (312) 555-0182', email: 'ethan@carterlogistics.com', owner: 'Sara Ahmed', status: 'Active' },
-  { id: 'CT-D003', contactId: 'CT-000038', date: '2026-07-22', contact: 'Olivia Martin', company: 'Horizon Properties', designation: 'Head of Sales', phone: '+1 (646) 555-0169', email: 'olivia@horizonproperties.com', owner: 'Ali Raza', status: 'Inactive' },
-];
+const dummyContacts = [];
 
 const blankContactForm = {
   contact: '',
@@ -26,19 +48,26 @@ const blankContactForm = {
   designation: '',
   phone: '',
   email: '',
-  date: '',
-  owner: 'Ali Raza',
+  whatsapp: '',
+  address: '',
+  city: '',
+  country: '',
+  owner: '',
   status: 'Active',
+  notes: '',
 };
 
 const defaultContactFormFields = [
-  { key: 'contact', label: 'Contact' },
+  { key: 'contact', label: 'Contact Name' },
   { key: 'company', label: 'Company' },
   { key: 'designation', label: 'Designation' },
   { key: 'phone', label: 'Phone' },
   { key: 'email', label: 'Email', type: 'email' },
-  { key: 'date', label: 'Date', type: 'date' },
-  { key: 'owner', label: 'Owner', kind: 'select', options: owners.filter((item) => item !== 'All') },
+  { key: 'whatsapp', label: 'WhatsApp' },
+  { key: 'address', label: 'Address' },
+  { key: 'city', label: 'City' },
+  { key: 'country', label: 'Country' },
+  { key: 'owner', label: 'Owner', kind: 'select' },
   { key: 'status', label: 'Status', kind: 'select', options: contactStatuses.filter((item) => item !== 'All') },
 ];
 
@@ -49,6 +78,10 @@ const defaultContactDetailFields = [
   { key: 'designation', label: 'Designation' },
   { key: 'phone', label: 'Phone' },
   { key: 'email', label: 'Email' },
+  { key: 'whatsapp', label: 'WhatsApp' },
+  { key: 'address', label: 'Address' },
+  { key: 'city', label: 'City' },
+  { key: 'country', label: 'Country' },
   { key: 'owner', label: 'Owner' },
   { key: 'status', label: 'Status', render: (contact) => <span className={`lf-badge contact-status contact-status--${String(contact.status || '').toLowerCase()}`}>{contact.status || '-'}</span> },
   { key: 'date', label: 'Created Date', render: (contact) => formatContactDate(contact.date) },
@@ -63,6 +96,9 @@ const defaultContactFilters = [
 ];
 
 export default function ContactsPage({
+  isCompanyPage = false,
+  isPipelineRecordsPage = false,
+  currentUser,
   contacts = [],
   setContacts,
   setMessage,
@@ -101,6 +137,10 @@ export default function ContactsPage({
   canEdit = true,
   canDelete = true,
 }) {
+  const [localContacts, setLocalContacts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [availableUsers, setAvailableUsers] = useState([]);
+
   const [filters, setFilters] = useState(() => buildDefaultFilters(filterConfig));
   const [dateRanges, setDateRanges] = useState({});
   const [addOpen, setAddOpen] = useState(false);
@@ -108,26 +148,102 @@ export default function ContactsPage({
   const [editingContact, setEditingContact] = useState(null);
   const [deletingContact, setDeletingContact] = useState(null);
   const [form, setForm] = useState(blankFormValue);
-  const [fallbackContacts, setFallbackContacts] = useState(dummyContacts);
-  const contactRows = contacts.length > 0
-    ? contacts.map((contact) => ({ ...contact, contactId: contact.contactId || contact.id }))
-    : useFallbackRows
-      ? fallbackContacts.map((contact) => ({ ...contact, contactId: contact.contactId || contact.id }))
-      : [];
+
+  const endpointBase = isCompanyPage ? '/api/companies/' : '/api/contacts/';
+
+  // Fetch available salespeople
+  const fetchUsers = async () => {
+    try {
+      const res = await apiGet('/api/admin/users/');
+      if (res.success && Array.isArray(res.data)) {
+        setAvailableUsers(res.data);
+      } else {
+        if (currentUser) {
+          setAvailableUsers([{ id: currentUser.id, full_name: currentUser.first_name ? `${currentUser.first_name} ${currentUser.last_name}` : currentUser.username }]);
+        }
+      }
+    } catch (err) {
+      if (currentUser) {
+        setAvailableUsers([{ id: currentUser.id, full_name: currentUser.first_name ? `${currentUser.first_name} ${currentUser.last_name}` : currentUser.username }]);
+      }
+    }
+  };
+
+  // Fetch all items (contacts or companies)
+  const fetchAllContacts = async () => {
+    try {
+      setLoading(true);
+      let allItems = [];
+      let url = `${endpointBase}?page_size=100`;
+      while (url) {
+        const path = url.includes(endpointBase) ? url.substring(url.indexOf(endpointBase)) : url;
+        const res = await apiGet(path);
+        if (res.success && res.data) {
+          const results = res.data.results || [];
+          allItems = [...allItems, ...results];
+          url = res.data.pagination?.next || null;
+        } else {
+          break;
+        }
+      }
+      const mapper = isCompanyPage ? companyBackendToUi : contactBackendToUi;
+      const mapped = allItems.map(mapper);
+      setLocalContacts(mapped);
+      setContacts?.(mapped);
+    } catch (err) {
+      console.error(err);
+      setMessage?.(err.message || `Failed to fetch ${isCompanyPage ? 'companies' : 'contacts'} from server.`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isPipelineRecordsPage) {
+      setLoading(false);
+      return;
+    }
+    fetchUsers();
+    fetchAllContacts();
+  }, [isCompanyPage, isPipelineRecordsPage]);
+
+  const getOwnerName = (ownerId) => {
+    if (!ownerId) return 'Unassigned';
+    const found = availableUsers.find(u => String(u.id) === String(ownerId));
+    return found ? (found.full_name || found.username) : `User ${ownerId}`;
+  };
+
+  // Fetch detailed record
+  const fetchContactDetail = async (item) => {
+    try {
+      const res = await apiGet(`${endpointBase}${item.backendId || item.id}/`);
+      if (res.success && res.data) {
+        const mapper = isCompanyPage ? companyBackendToUi : contactBackendToUi;
+        const detailed = mapper(res.data);
+        setSelectedContact(detailed);
+      }
+    } catch (err) {
+      console.error('Failed to retrieve detail:', err);
+    }
+  };
+
+  const contactRows = isPipelineRecordsPage ? contacts : localContacts;
+
   const contactSummary = useMemo(() => ({
     total: contactRows.length,
-    active: contactRows.filter((contact) => contact.status === 'Active').length,
-    inactive: contactRows.filter((contact) => contact.status === 'Inactive').length,
-    companies: new Set(contactRows.map((contact) => contact.company).filter(Boolean)).size,
+    active: contactRows.filter((item) => item.status === 'Active').length,
+    inactive: contactRows.filter((item) => item.status === 'Inactive').length,
+    companies: new Set(contactRows.map((item) => item.company).filter(Boolean)).size,
   }), [contactRows]);
 
   const rows = useMemo(() => contactRows
-    .filter((contact) => filterConfig.every((filter) => {
+    .filter((item) => filterConfig.every((filter) => {
       const selected = filters[filter.key];
       if (!selected || (selected === 'All' && filter.type !== 'dateRange') || selected === 'Any Time') return true;
-      if (filter.type === 'dateRange') return matchesDateFilter(contact.date, selected, dateRanges[filter.key]);
-      return contact[filter.field || filter.key] === selected;
-    })), [contactRows, filterConfig, filters, dateRanges]);
+      if (filter.type === 'dateRange') return matchesDateFilter(item.date, selected, dateRanges[filter.key]);
+      if (filter.key === 'owner') return getOwnerName(item.owner) === selected;
+      return item[filter.field || filter.key] === selected;
+    })), [contactRows, filterConfig, filters, dateRanges, availableUsers]);
 
   const activeFilterCount = Object.values(filters).filter((value) => value !== 'All' && value !== 'Any Time').length;
   const updateFilter = (key, value) => setFilters((current) => ({ ...current, [key]: value }));
@@ -135,56 +251,85 @@ export default function ContactsPage({
     setFilters(buildDefaultFilters(filterConfig));
     setDateRanges({});
   };
-  const updateVisibleContacts = (updater) => {
-    if (contacts.length > 0) {
-      setContacts?.(updater);
-      return;
+
+  const deleteContact = async (item) => {
+    if (!item) return;
+    try {
+      const res = await authRequest(`${endpointBase}${item.backendId || item.id}/`, {
+        method: 'DELETE',
+      });
+      if (res.success) {
+        setMessage?.(`${isCompanyPage ? 'Company' : 'Contact'} deleted successfully.`);
+        if (selectedContact?.id === item.id) {
+          setSelectedContact(null);
+          onDetailOpenChange?.(false);
+        }
+        if (editingContact?.id === item.id) setEditingContact(null);
+        setDeletingContact(null);
+        fetchAllContacts();
+      } else {
+        setMessage?.(res.message || `Failed to delete ${isCompanyPage ? 'company' : 'contact'}.`);
+        setDeletingContact(null);
+      }
+    } catch (err) {
+      console.error(err);
+      setMessage?.(err.message || `Failed to delete ${isCompanyPage ? 'company' : 'contact'}.`);
+      setDeletingContact(null);
     }
-    if (!useFallbackRows) {
-      const nextRows = typeof updater === 'function' ? updater([]) : updater;
-      setContacts?.(nextRows);
-      return;
-    }
-    setFallbackContacts(updater);
   };
 
-  const deleteContact = (contact) => {
-    updateVisibleContacts((current) => current.filter((item) => item.id !== contact.id));
-    if (selectedContact?.id === contact.id) {
-      setSelectedContact(null);
-      onDetailOpenChange?.(false);
-    }
-    if (editingContact?.id === contact.id) setEditingContact(null);
-    setDeletingContact(null);
-    setMessage?.('Contact deleted successfully.');
-  };
-
-  const requestDeleteContact = (contact) => {
-    setDeletingContact(contact);
+  const requestDeleteContact = (item) => {
+    setDeletingContact(item);
   };
 
   const openAddContact = () => {
-    setForm({ ...blankFormValue, date: blankFormValue.date || new Date().toISOString().slice(0, 10) });
+    setForm({ ...blankFormValue, date: blankFormValue.date || new Date().toISOString().slice(0, 10), owner: currentUser?.id || '' });
     setEditingContact(null);
     setSelectedContact(null);
     onDetailOpenChange?.(false);
     setAddOpen(true);
   };
 
-  const openEditContact = (contact) => {
-    setForm(formFields.reduce((nextForm, field) => ({
-      ...nextForm,
-      [field.key]: contact[field.key] || blankFormValue[field.key] || '',
-    }), {}));
-    setEditingContact(contact);
+  const openEditContact = (item) => {
+    setForm(isCompanyPage ? {
+      name: item.name || '',
+      type: item.type || 'Prospect',
+      rating: item.rating || 'None',
+      employees: String(item.employees || ''),
+      annualRevenue: String(item.annualRevenue || ''),
+      industry: item.industry || 'Other',
+      phone: item.phone || '',
+      email: item.email || '',
+      website: item.website || '',
+      date: item.date || '',
+      owner: item.owner || currentUser?.id || '',
+      billing_address: item.billing_address || item.address || '',
+      shipping_address: item.shipping_address || item.address || '',
+      description: item.description || '',
+    } : {
+      contact: item.contact || '',
+      company: item.company || '',
+      designation: item.designation || '',
+      phone: item.phone || '',
+      email: item.email || '',
+      whatsapp: item.whatsapp || '',
+      address: item.address || '',
+      city: item.city || '',
+      country: item.country || '',
+      owner: item.owner || currentUser?.id || '',
+      status: item.status || 'Active',
+      notes: item.notes || '',
+    });
+    setEditingContact(item);
     setSelectedContact(null);
     onDetailOpenChange?.(false);
     setAddOpen(false);
   };
 
-  const openContactDetails = (contact) => {
-    setSelectedContact(contact);
+  const openContactDetails = (item) => {
+    setSelectedContact(item);
     onDetailOpenChange?.(true);
+    fetchContactDetail(item);
   };
 
   const closeContactDetails = () => {
@@ -192,45 +337,78 @@ export default function ContactsPage({
     onDetailOpenChange?.(false);
   };
 
-  const saveContact = () => {
-    const typedId = allowManualId ? String(form.id || '').trim() : '';
-    const nextId = typedId || makeEntityId(contactRows, idPrefix);
-    const nextContact = {
-      ...form,
-      id: nextId,
-      contactId: nextId,
-      contact: form.contact || form.name || form.company || '',
-      company: form.company || form.name || '',
-      designation: form.designation || form.industry || '',
-      date: form.date || new Date().toISOString().slice(0, 10),
-    };
-
-    updateVisibleContacts((current) => [nextContact, ...current]);
-    setMessage?.('Contact saved successfully.');
-    setAddOpen(false);
-    setForm(blankFormValue);
+  const saveContact = async () => {
+    try {
+      const payload = isCompanyPage ? companyUiToBackend(form) : contactUiToBackend(form);
+      const res = await authRequest(endpointBase, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      if (res.success) {
+        setMessage?.(`${isCompanyPage ? 'Company' : 'Contact'} saved successfully.`);
+        setAddOpen(false);
+        setForm(blankFormValue);
+        fetchAllContacts();
+      } else {
+        setMessage?.(res.message || `Failed to save ${isCompanyPage ? 'company' : 'contact'}.`);
+      }
+    } catch (err) {
+      console.error(err);
+      if (err.data && typeof err.data === 'object') {
+        // Expose backend validation messages
+        const msgs = Object.entries(err.data).map(([k, v]) => `${k}: ${Array.isArray(v) ? v[0] : v}`).join(' | ');
+        setMessage?.(msgs);
+      } else {
+        setMessage?.(err.message || `Failed to save ${isCompanyPage ? 'company' : 'contact'}.`);
+      }
+    }
   };
 
-  const saveEditedContact = () => {
+  const saveEditedContact = async () => {
     if (!editingContact) return;
-
-    const updatedContact = {
-      ...editingContact,
-      ...form,
-      id: allowManualId && form.id ? form.id : editingContact.id,
-      contactId: allowManualId && form.id ? form.id : editingContact.contactId || editingContact.id,
-      contact: form.contact || form.name || form.company || '',
-      company: form.company || form.name || '',
-      designation: form.designation || form.industry || '',
-    };
-
-    updateVisibleContacts((current) => current.map((contact) => (
-      contact.id === editingContact.id ? updatedContact : contact
-    )));
-    setMessage?.('Contact updated successfully.');
-    setEditingContact(null);
-    setForm(blankFormValue);
+    try {
+      const payload = isCompanyPage ? companyUiToBackend(form) : contactUiToBackend(form);
+      const res = await authRequest(`${endpointBase}${editingContact.backendId || editingContact.id}/`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      });
+      if (res.success) {
+        setMessage?.(`${isCompanyPage ? 'Company' : 'Contact'} updated successfully.`);
+        setEditingContact(null);
+        setForm(blankFormValue);
+        fetchAllContacts();
+      } else {
+        setMessage?.(res.message || `Failed to update ${isCompanyPage ? 'company' : 'contact'}.`);
+      }
+    } catch (err) {
+      console.error(err);
+      if (err.data && typeof err.data === 'object') {
+        const msgs = Object.entries(err.data).map(([k, v]) => `${k}: ${Array.isArray(v) ? v[0] : v}`).join(' | ');
+        setMessage?.(msgs);
+      } else {
+        setMessage?.(err.message || `Failed to update ${isCompanyPage ? 'company' : 'contact'}.`);
+      }
+    }
   };
+
+  // Build filter options dynamically using live owners
+  const dynamicFilterConfig = useMemo(() => {
+    return filterConfig.map(filter => {
+      if (filter.key === 'owner') {
+        const list = ['All'];
+        availableUsers.forEach(u => {
+          const name = u.full_name || u.username;
+          if (name && !list.includes(name)) list.push(name);
+        });
+        return { ...filter, options: list };
+      }
+      return filter;
+    });
+  }, [filterConfig, availableUsers]);
+
+  if (loading && contactRows.length === 0) {
+    return <div className="text-slate-400 p-8 text-center font-semibold animate-pulse">Loading {isCompanyPage ? 'companies' : 'contacts'} from server...</div>;
+  }
 
   if (addOpen) {
     return (
@@ -245,6 +423,9 @@ export default function ContactsPage({
         setForm={setForm}
         onClose={() => { setAddOpen(false); onDetailOpenChange?.(false); }}
         onSubmit={saveContact}
+        availableUsers={availableUsers}
+        currentUser={currentUser}
+        resourceName={isCompanyPage ? 'companies' : 'contacts'}
       />
     );
   }
@@ -262,6 +443,9 @@ export default function ContactsPage({
         setForm={setForm}
         onClose={() => { setEditingContact(null); onDetailOpenChange?.(false); }}
         onSubmit={saveEditedContact}
+        availableUsers={availableUsers}
+        currentUser={currentUser}
+        resourceName={isCompanyPage ? 'companies' : 'contacts'}
       />
     );
   }
@@ -276,23 +460,27 @@ export default function ContactsPage({
         deletingContact,
         onCancelDelete: () => setDeletingContact(null),
         onConfirmDelete: () => deleteContact(deletingContact),
+        getOwnerName,
       });
     }
 
     return (
       <>
         <ContactRecordDetailPage
-  contact={selectedContact}
-  onBack={closeContactDetails}
-  onEdit={() => openEditContact(selectedContact)}
-  onDelete={() => requestDeleteContact(selectedContact)}
-  canEdit={canEdit}
-/>
+          contact={selectedContact}
+          onBack={closeContactDetails}
+          onEdit={() => openEditContact(selectedContact)}
+          onDelete={() => requestDeleteContact(selectedContact)}
+          canEdit={canEdit}
+          canDelete={canDelete}
+          getOwnerName={getOwnerName}
+        />
         {deletingContact && (
           <ConfirmDeleteContact
             contact={deletingContact}
             onCancel={() => setDeletingContact(null)}
             onConfirm={() => deleteContact(deletingContact)}
+            isCompany={isCompanyPage}
           />
         )}
       </>
@@ -305,7 +493,7 @@ export default function ContactsPage({
         <section className="page-panel leads-page-panel">
           {filterTopContent || <ContactSummaryStrip summary={contactSummary} />}
           <section className="page-panel-filters lf-filter-bar" aria-label="Contact filters">
-            {filterConfig.map((filter) => (
+            {dynamicFilterConfig.map((filter) => (
               <ContactFilter
                 key={filter.key}
                 label={filter.label}
@@ -341,21 +529,25 @@ export default function ContactsPage({
               </tr>
             </thead>
             <tbody>
-              {rows.map((contact, rowIndex) => {
+              {rows.map((item, rowIndex) => {
                 return (
-                  <tr key={contact.id} className="clickable-row" onClick={() => openContactDetails(contact)}>
+                  <tr key={item.id} className="clickable-row" onClick={() => openContactDetails(item)}>
                     {showSerialColumn && <td className="lf-sr-col">{rowIndex + 1}</td>}
                     {tableColumns.map(([key, , className]) => (
                       <td key={key} className={className || undefined}>
                         {key === 'status'
-                          ? <span className={`lf-badge contact-status contact-status--${String(contact.status || '').toLowerCase()}`}>{contact.status || '-'}</span>
-                          : contact[key] || '-'}
+                          ? <span className={`lf-badge contact-status contact-status--${String(item.status || '').toLowerCase()}`}>{item.status || '-'}</span>
+                          : key === 'owner'
+                            ? getOwnerName(item.owner)
+                            : key === 'annualRevenue' && typeof item[key] === 'number'
+                              ? `$${item[key].toLocaleString()}`
+                              : item[key] || '-'}
                       </td>
                     ))}
                     <td className="lf-actions-cell">
                       <div className="inline-row-actions">
-                        {canEdit && <button type="button" className="inline-action inline-action--edit" aria-label={`Edit ${getContactDisplayName(contact)}`} title="Edit" onClick={(event) => { event.stopPropagation(); openEditContact(contact); }}><Edit3 size={15} /></button>}
-                        {canDelete && <button type="button" className="inline-action inline-action--delete" aria-label={`Delete ${getContactDisplayName(contact)}`} title="Delete" onClick={(event) => { event.stopPropagation(); requestDeleteContact(contact); }}><Trash2 size={15} /></button>}
+                        {canEdit && <button type="button" className="inline-action inline-action--edit" aria-label={`Edit ${getContactDisplayName(item)}`} title="Edit" onClick={(event) => { event.stopPropagation(); openEditContact(item); }}><Edit3 size={15} /></button>}
+                        {canDelete && <button type="button" className="inline-action inline-action--delete" aria-label={`Delete ${getContactDisplayName(item)}`} title="Delete" onClick={(event) => { event.stopPropagation(); requestDeleteContact(item); }}><Trash2 size={15} /></button>}
                       </div>
                     </td>
                   </tr>
@@ -370,6 +562,7 @@ export default function ContactsPage({
           contact={deletingContact}
           onCancel={() => setDeletingContact(null)}
           onConfirm={() => deleteContact(deletingContact)}
+          isCompany={isCompanyPage}
         />
       )}
     </div>
@@ -399,8 +592,24 @@ function ContactSummaryStrip({ summary }) {
   );
 }
 
-function ContactFormPage({ title, description, submitLabel, sectionTitle, fields, pageClassName, form, setForm, onClose, onSubmit }) {
+function ContactFormPage({ title, description, submitLabel, sectionTitle, fields, pageClassName, form, setForm, onClose, onSubmit, availableUsers, currentUser, resourceName }) {
   const setField = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+
+  const userRoleName = typeof currentUser?.role === 'string' 
+    ? currentUser.role 
+    : (currentUser?.role?.name || '');
+
+  const hasAssignAll = currentUser?.user_type === 'ADMIN' || 
+                       currentUser?.is_staff || 
+                       currentUser?.is_superuser || 
+                       userRoleName === 'Administrator' || 
+                       userRoleName === 'Salesperson Manager';
+
+  const displayUsers = hasAssignAll 
+    ? availableUsers 
+    : (availableUsers.some(u => String(u.id) === String(currentUser?.id)) 
+        ? availableUsers.filter(u => String(u.id) === String(currentUser?.id))
+        : [{ id: currentUser?.id, full_name: currentUser?.first_name ? `${currentUser.first_name} ${currentUser.last_name}` : currentUser?.username }]);
 
   return (
     <div className={`lf-page leads-page contacts-page${pageClassName ? ` ${pageClassName}` : ''}`}>
@@ -417,11 +626,28 @@ function ContactFormPage({ title, description, submitLabel, sectionTitle, fields
             <div className="contact-form-section-title">
               <h3>{sectionTitle}</h3>
             </div>
-            {fields.map((field) => (
-              field.kind === 'select'
+            {fields.map((field) => {
+              if (field.key === 'owner') {
+                return (
+                  <label className="lf-field" key={field.key}>
+                    <span>{field.label}</span>
+                    <select 
+                      value={form[field.key] || ''} 
+                      onChange={(e) => setField(field.key, e.target.value)}
+                      disabled={!hasAssignAll}
+                    >
+                      {hasAssignAll && <option value="">Unassigned</option>}
+                      {displayUsers.map(u => (
+                        <option key={u.id} value={u.id}>{u.full_name || u.username}</option>
+                      ))}
+                    </select>
+                  </label>
+                );
+              }
+              return field.kind === 'select'
                 ? <ContactFormSelect key={field.key} label={field.label} value={form[field.key] || ''} options={field.options} onChange={(value) => setField(field.key, value)} />
-                : <ContactTextInput key={field.key} label={field.label} type={field.type || 'text'} value={form[field.key] || ''} onChange={(value) => setField(field.key, value)} />
-            ))}
+                : <ContactTextInput key={field.key} label={field.label} type={field.type || 'text'} value={form[field.key] || ''} onChange={(value) => setField(field.key, value)} />;
+            })}
           </form>
           <div className="lf-modal-actions">
             <button type="button" onClick={onClose}>Cancel</button>
@@ -433,92 +659,15 @@ function ContactFormPage({ title, description, submitLabel, sectionTitle, fields
   );
 }
 
-function ContactRecordDetailPage({
-  contact,
-  onBack,
-  onEdit,
-  canEdit = true,
-}) {
-  return (
-    <div className="lf-page leads-page contact-record-page">
-      <section className="payment-record-detail contact-record-detail" aria-label="Contact details">
-        <header className="payment-record-header">
-          <button type="button" className="payment-record-back" aria-label="Back" title="Back" onClick={onBack}><ArrowLeft size={22} /></button>
-          <div>
-            <h2>{contact.contact || 'Contact Detail'}</h2>
-            <p>{contact.company || '-'} / {contact.designation || '-'}</p>
-          </div>
-          <div className="contact-record-actions">
-            {canEdit && <button className="payment-record-edit" type="button" onClick={onEdit}>Edit</button>}
-          </div>
-        </header>
-
-        <section className="payment-record-summary" aria-label="Contact summary">
-          <div>
-            <span>Contact ID</span>
-            <strong>{contact.contactId || contact.id || '-'}</strong>
-          </div>
-          <div>
-            <span>Status</span>
-            <strong>{contact.status || '-'}</strong>
-          </div>
-          <div>
-            <span>Owner</span>
-            <strong>{contact.owner || '-'}</strong>
-          </div>
-          <div>
-            <span>Created Date</span>
-            <strong>{formatContactDate(contact.date)}</strong>
-          </div>
-        </section>
-
-        <div className="payment-record-sections lead-primary-sections">
-          <section className="payment-record-section">
-            <h3>Contact Information</h3>
-            <dl>
-              <div><dt>Contact</dt><dd>{contact.contact || '-'}</dd></div>
-              <div><dt>Designation</dt><dd>{contact.designation || '-'}</dd></div>
-              <div><dt>Phone</dt><dd>{contact.phone || '-'}</dd></div>
-              <div><dt>Email</dt><dd>{contact.email || '-'}</dd></div>
-              <div><dt>Company</dt><dd>{contact.company || '-'}</dd></div>
-              <div><dt>Owner</dt><dd>{contact.owner || '-'}</dd></div>
-              <div><dt>Status</dt><dd>{contact.status || '-'}</dd></div>
-              <div><dt>Created Date</dt><dd>{formatContactDate(contact.date)}</dd></div>
-            </dl>
-          </section>
-        </div>
-
-        <section className="payment-record-section payment-record-history">
-          <h3>Related Opportunities</h3>
-          <div className="contact-related-table-wrap">
-            <table className="contact-related-table">
-              <thead>
-                <tr>
-                  <th>Opportunity</th>
-                  <th>Stage</th>
-                  <th>Value</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td>{contact.relatedOpportunity || `${contact.company || contact.contact || 'Contact'} - Initial Opportunity`}</td>
-                  <td><span className="lf-badge contact-opportunity-stage">Closed Won</span></td>
-                  <td>$20000.00</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-      </section>
-    </div>
-  );
-}
-
 function ContactTextInput({ label, value, onChange, type = 'text' }) {
   return (
     <label className="lf-field">
       <span>{label}</span>
-      <input type={type} value={value} onChange={(event) => onChange(event.target.value)} />
+      {type === 'textarea' ? (
+        <textarea value={value} onChange={(event) => onChange(event.target.value)} rows={3} />
+      ) : (
+        <input type={type} value={value} onChange={(event) => onChange(event.target.value)} />
+      )}
     </label>
   );
 }
@@ -551,86 +700,491 @@ function ContactFormSelect({ label, value, options, onChange }) {
   );
 }
 
-function ContactDetailsPage({
+function ContactRecordDetailPage({
   contact,
-  pageClassName,
-  title,
-  ariaLabel,
-  fields,
-  extraContent,
-  showActivitySections,
-  onClose,
+  onBack,
   onEdit,
+  onDelete,
   canEdit = true,
+  canDelete = true,
+  getOwnerName,
+  onToast,
 }) {
+  if (!contact) return null;
+
+  const [activeTab, setActiveTab] = useState('overview');
+  const [sessionNotes, setSessionNotes] = useState(() => {
+    return contact.notes ? [{ id: 1, text: contact.notes, author: getOwnerName ? getOwnerName(contact.owner) : (contact.ownerName || 'System'), date: contact.date || 'Initial' }] : [];
+  });
+  const [newNoteText, setNewNoteText] = useState('');
+
+  // Avatar Initials
+  const initials = useMemo(() => {
+    const name = (contact.contact || contact.full_name || 'Contact').trim();
+    const parts = name.split(/\s+/).filter(Boolean);
+    if (!parts.length) return 'CT';
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }, [contact.contact, contact.full_name]);
+
+  // Phone & WhatsApp clean links
+  const rawPhone = String(contact.phone || '').trim();
+  const cleanPhone = rawPhone.replace(/[^0-9+]/g, '');
+  const rawWA = String(contact.whatsapp || contact.phone || '').trim();
+  const cleanWA = rawWA.replace(/[^0-9+]/g, '').replace(/^\+/, '');
+
+  // Add Session Note
+  const handleAddNote = (e) => {
+    e.preventDefault();
+    if (!newNoteText.trim()) return;
+    const noteObj = {
+      id: Date.now(),
+      text: newNoteText.trim(),
+      author: getOwnerName ? getOwnerName(contact.owner) : (contact.ownerName || 'Current Rep'),
+      date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    };
+    setSessionNotes(prev => [noteObj, ...prev]);
+    setNewNoteText('');
+    onToast?.('Note saved successfully.');
+  };
+
+  // Activity Timeline Events
+  const timelineEvents = useMemo(() => {
+    if (Array.isArray(contact.activities) && contact.activities.length > 0) {
+      return contact.activities;
+    }
+    const events = [];
+    if (contact.date) {
+      events.push({
+        id: 'evt-created',
+        title: 'Contact Created',
+        description: `Contact record created and assigned to ${getOwnerName ? getOwnerName(contact.owner) : (contact.ownerName || 'Salesperson')}.`,
+        date: formatContactDate(contact.date),
+        type: 'CREATED',
+        icon: User
+      });
+    }
+
+    if (contact.updatedAt && contact.updatedAt !== contact.date) {
+      events.push({
+        id: 'evt-updated',
+        title: 'Contact Updated',
+        description: `Status: ${contact.status || 'Active'}.`,
+        date: formatContactDate(contact.updatedAt),
+        type: 'UPDATE',
+        icon: Edit3
+      });
+    }
+
+    if (Array.isArray(contact.related_opportunities) && contact.related_opportunities.length > 0) {
+      events.push({
+        id: 'evt-opps',
+        title: 'Linked to Deals',
+        description: `Associated with ${contact.related_opportunities.length} active opportunity record(s).`,
+        date: 'Active Link',
+        type: 'OPPORTUNITY',
+        icon: Briefcase
+      });
+    }
+
+    return events;
+  }, [contact, getOwnerName]);
+
+  const ownerDisplayName = getOwnerName ? getOwnerName(contact.owner) : (contact.ownerName || contact.owner || 'Unassigned');
+
+  // Related Deals array
+  const relatedOpps = Array.isArray(contact.related_opportunities) ? contact.related_opportunities : [];
+
   return (
-    <div className={`lf-page leads-page contacts-page${pageClassName ? ` ${pageClassName}` : ''}`}>
-      <section className="lead-detail-page contact-detail-page" aria-label={ariaLabel}>
-        <div className="lead-detail-page-card">
-          <div className="lead-detail-title">
-            <h2>{title}</h2>
+    <div className="lf-page leads-page contact-record-page">
+      <section className="payment-record-detail contact-record-detail lead-details-redesign" aria-label="Contact details">
+        {/* ── HERO HEADER ── */}
+        <header className="lead-drawer-hero">
+          <div className="lead-hero-left">
+            <button type="button" className="lead-hero-back-btn" aria-label="Back" title="Back" onClick={onBack}>
+              <ArrowLeft size={20} />
+            </button>
+
+            <div className="lead-avatar-circle contact-avatar-gradient">
+              <span>{initials}</span>
+            </div>
+
+            <div className="lead-hero-title-block">
+              <div className="lead-hero-title-row">
+                <h2>{contact.contact || contact.full_name || 'Contact Detail'}</h2>
+                <span className={`lead-status-pill ${String(contact.status || '').toLowerCase() === 'active' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-100 text-slate-700 border-slate-200'}`}>
+                  {contact.status || 'Active'}
+                </span>
+                <span className="lead-code-pill">
+                  {contact.contactId || contact.clientId || contact.id}
+                </span>
+              </div>
+
+              <p className="lead-hero-subtitle">
+                {contact.designation ? (
+                  <>
+                    <strong>{contact.designation}</strong>
+                    <span className="mx-2">•</span>
+                  </>
+                ) : null}
+                {contact.company ? (
+                  <>
+                    <Building2 size={14} className="inline-icon mr-1" />
+                    {contact.company}
+                  </>
+                ) : 'Individual Contact'}
+              </p>
+            </div>
           </div>
-          <div className="lf-drawer-head">
-            <div className="lf-drawer-person">
-              <div>
-                <h2>{getContactDisplayName(contact)}</h2>
-                <p>{contact.company || '-'} · {contact.designation || '-'}</p>
+
+          <div className="lead-record-actions">
+            {canEdit && (
+              <button type="button" className="payment-record-edit" onClick={onEdit}>
+                <Edit3 size={15} /> Edit
+              </button>
+            )}
+            {canDelete && (
+              <button type="button" className="lead-record-lost" onClick={onDelete}>
+                <Trash2 size={15} /> Delete
+              </button>
+            )}
+          </div>
+        </header>
+
+        {/* ── QUICK COMMUNICATION BAR ── */}
+        <div className="lead-quick-communication-bar">
+          <span className="lead-quick-comm-label">Quick Actions:</span>
+          <a
+            href={rawPhone ? `tel:${cleanPhone}` : undefined}
+            className={`lead-comm-btn ${rawPhone ? 'active' : 'disabled'}`}
+            title={rawPhone ? `Call ${rawPhone}` : 'No phone number available'}
+            onClick={(e) => !rawPhone && e.preventDefault()}
+          >
+            <Phone size={14} /> Call
+          </a>
+
+          <a
+            href={contact.email ? `mailto:${contact.email}` : undefined}
+            className={`lead-comm-btn ${contact.email ? 'active' : 'disabled'}`}
+            title={contact.email ? `Email ${contact.email}` : 'No email address available'}
+            onClick={(e) => !contact.email && e.preventDefault()}
+          >
+            <Mail size={14} /> Email
+          </a>
+
+          <a
+            href={cleanWA ? `https://wa.me/${cleanWA}` : undefined}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`lead-comm-btn whatsapp ${cleanWA ? 'active' : 'disabled'}`}
+            title={cleanWA ? `WhatsApp ${rawWA}` : 'No phone / WhatsApp number available'}
+            onClick={(e) => !cleanWA && e.preventDefault()}
+          >
+            <Send size={14} /> WhatsApp
+          </a>
+        </div>
+
+        {/* ── TABBED NAVIGATION ── */}
+        <nav className="lead-tabs-nav">
+          <button
+            type="button"
+            className={`lead-tab-btn ${activeTab === 'overview' ? 'active' : ''}`}
+            onClick={() => setActiveTab('overview')}
+          >
+            <User size={15} /> Profile & Details
+          </button>
+
+          <button
+            type="button"
+            className={`lead-tab-btn ${activeTab === 'opportunities' ? 'active' : ''}`}
+            onClick={() => setActiveTab('opportunities')}
+          >
+            <Briefcase size={15} /> Linked Deals
+            {relatedOpps.length > 0 && <span className="tab-count-badge">{relatedOpps.length}</span>}
+          </button>
+
+          <button
+            type="button"
+            className={`lead-tab-btn ${activeTab === 'activities' ? 'active' : ''}`}
+            onClick={() => setActiveTab('activities')}
+          >
+            <Activity size={15} /> Activities & Notes
+            {sessionNotes.length > 0 && <span className="tab-count-badge">{sessionNotes.length}</span>}
+          </button>
+        </nav>
+
+        {/* ── TAB CONTENT ── */}
+        <div className="lead-tab-content-container">
+
+          {/* TAB 1: OVERVIEW & PROFILE */}
+          {activeTab === 'overview' && (
+            <div className="lead-tab-panel overview-panel">
+              {/* Summary Strip */}
+              <section className="payment-record-summary lead-redesign-summary" aria-label="Contact summary">
+                <div>
+                  <span>Contact ID</span>
+                  <strong>{contact.contactId || contact.id || '-'}</strong>
+                </div>
+                <div>
+                  <span>Status</span>
+                  <strong>{contact.status || 'Active'}</strong>
+                </div>
+                <div>
+                  <span>Assigned Owner</span>
+                  <strong>{ownerDisplayName}</strong>
+                </div>
+                <div>
+                  <span>Created Date</span>
+                  <strong>{formatContactDate(contact.date)}</strong>
+                </div>
+              </section>
+
+              <div className="lead-overview-cards-grid">
+                {/* Contact Details Card (Premium Redesign) */}
+                <section className="lead-card-box payment-parameters-card">
+                  <header className="lead-card-box-head">
+                    <User size={16} className="text-cyan-600" />
+                    <h3>Contact Details</h3>
+                  </header>
+                  <div className="payment-param-grid">
+                    <div className="payment-param-item">
+                      <div className="payment-param-icon bg-cyan-50 text-cyan-600">
+                        <User size={15} />
+                      </div>
+                      <div className="payment-param-text">
+                        <span className="payment-param-label">Full Name</span>
+                        <strong className="payment-param-value">{contact.contact || contact.full_name || '-'}</strong>
+                      </div>
+                    </div>
+
+                    <div className="payment-param-item">
+                      <div className="payment-param-icon bg-indigo-50 text-indigo-600">
+                        <Briefcase size={15} />
+                      </div>
+                      <div className="payment-param-text">
+                        <span className="payment-param-label">Designation / Title</span>
+                        <strong className="payment-param-value">{contact.designation || '-'}</strong>
+                      </div>
+                    </div>
+
+                    <div className="payment-param-item">
+                      <div className="payment-param-icon bg-emerald-50 text-emerald-600">
+                        <Phone size={15} />
+                      </div>
+                      <div className="payment-param-text">
+                        <span className="payment-param-label">Phone Number</span>
+                        <strong className="payment-param-value font-mono">{contact.phone || '-'}</strong>
+                      </div>
+                    </div>
+
+                    <div className="payment-param-item">
+                      <div className="payment-param-icon bg-sky-50 text-sky-600">
+                        <Mail size={15} />
+                      </div>
+                      <div className="payment-param-text">
+                        <span className="payment-param-label">Email Address</span>
+                        <strong className="payment-param-value text-sky-700">{contact.email || '-'}</strong>
+                      </div>
+                    </div>
+
+                    <div className="payment-param-item">
+                      <div className="payment-param-icon bg-emerald-50 text-emerald-600">
+                        <MessageSquare size={15} />
+                      </div>
+                      <div className="payment-param-text">
+                        <span className="payment-param-label">WhatsApp</span>
+                        <strong className="payment-param-value font-mono">{contact.whatsapp || contact.phone || '-'}</strong>
+                      </div>
+                    </div>
+
+                    <div className="payment-param-item">
+                      <div className="payment-param-icon bg-purple-50 text-purple-600">
+                        <User size={15} />
+                      </div>
+                      <div className="payment-param-text">
+                        <span className="payment-param-label">Assigned Owner</span>
+                        <strong className="payment-param-value">{ownerDisplayName}</strong>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                {/* Company & Address Details Card (Premium Redesign) */}
+                <section className="lead-card-box payment-parameters-card">
+                  <header className="lead-card-box-head">
+                    <MapPin size={16} className="text-indigo-600" />
+                    <h3>Company & Address Details</h3>
+                  </header>
+                  <div className="payment-param-grid">
+                    <div className="payment-param-item">
+                      <div className="payment-param-icon bg-purple-50 text-purple-600">
+                        <Building2 size={15} />
+                      </div>
+                      <div className="payment-param-text">
+                        <span className="payment-param-label">Company</span>
+                        <strong className="payment-param-value">{contact.company || '-'}</strong>
+                      </div>
+                    </div>
+
+                    <div className="payment-param-item">
+                      <div className="payment-param-icon bg-amber-50 text-amber-600">
+                        <MapPin size={15} />
+                      </div>
+                      <div className="payment-param-text">
+                        <span className="payment-param-label">Street Address</span>
+                        <strong className="payment-param-value">{contact.address || '-'}</strong>
+                      </div>
+                    </div>
+
+                    <div className="payment-param-item">
+                      <div className="payment-param-icon bg-sky-50 text-sky-600">
+                        <Building2 size={15} />
+                      </div>
+                      <div className="payment-param-text">
+                        <span className="payment-param-label">City</span>
+                        <strong className="payment-param-value">{contact.city || '-'}</strong>
+                      </div>
+                    </div>
+
+                    <div className="payment-param-item">
+                      <div className="payment-param-icon bg-emerald-50 text-emerald-600">
+                        <Globe size={15} />
+                      </div>
+                      <div className="payment-param-text">
+                        <span className="payment-param-label">Country</span>
+                        <strong className="payment-param-value">{contact.country || '-'}</strong>
+                      </div>
+                    </div>
+
+                    <div className="payment-param-item">
+                      <div className="payment-param-icon bg-blue-50 text-blue-600">
+                        <Building2 size={15} />
+                      </div>
+                      <div className="payment-param-text">
+                        <span className="payment-param-label">Organization</span>
+                        <strong className="payment-param-value">{contact.organization || '-'}</strong>
+                      </div>
+                    </div>
+
+                    <div className="payment-param-item">
+                      <div className="payment-param-icon bg-slate-100 text-slate-600">
+                        <Activity size={15} />
+                      </div>
+                      <div className="payment-param-text">
+                        <span className="payment-param-label">Status</span>
+                        <strong className="payment-param-value">{contact.status || 'Active'}</strong>
+                      </div>
+                    </div>
+                  </div>
+                </section>
               </div>
             </div>
-            <button type="button" className="button secondary lead-detail-back" aria-label="Back" title="Back" onClick={onClose}><ArrowLeft size={22} /></button>
-          </div>
-
-          <div className="lf-detail-grid">
-            {fields.map((field) => (
-              <ContactDetail
-                key={field.label}
-                label={field.label}
-                value={field.render ? field.render(contact) : contact[field.key] || (field.fallbackKey ? contact[field.fallbackKey] : '')}
-              />
-            ))}
-          </div>
-
-          {extraContent || (
-            <section className="contact-detail-section" aria-label="Related opportunities">
-              <h3>Related Opportunities</h3>
-              <div className="contact-related-table-wrap">
-                <table className="contact-related-table">
-                  <thead>
-                    <tr>
-                      <th>Opportunity</th>
-                      <th>Stage</th>
-                      <th>Value</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td>{contact.relatedOpportunity || `${contact.company || contact.contact || 'Contact'} - Initial Opportunity`}</td>
-                      <td><span className="lf-badge contact-opportunity-stage">Closed Won</span></td>
-                      <td>$20000.00</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </section>
           )}
 
-          {showActivitySections && (
-            <>
-              <section className="contact-detail-section" aria-label="Activity timeline">
-                <h3>Activity Timeline</h3>
-                <p className="contact-timeline-item"><Check size={15} aria-hidden="true" />Contact Created</p>
-              </section>
-
-              <section className="contact-detail-section" aria-label="Related tasks">
-                <h3>Related Tasks</h3>
-                <p>No tasks assigned.</p>
-              </section>
-            </>
+          {/* TAB 2: RELATED OPPORTUNITIES */}
+          {activeTab === 'opportunities' && (
+            <div className="lead-tab-panel opps-panel">
+              {relatedOpps.length > 0 ? (
+                <div className="contact-related-table-wrap">
+                  <table className="contact-related-table">
+                    <thead>
+                      <tr>
+                        <th>Deal Code</th>
+                        <th>Opportunity Name</th>
+                        <th>Stage</th>
+                        <th>Value</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {relatedOpps.map((opp) => (
+                        <tr key={opp.id || opp.opportunity_code || opp.name}>
+                          <td><span className="font-mono text-xs font-bold text-indigo-600">{opp.opportunity_code || `OP-${opp.id}`}</span></td>
+                          <td><strong>{opp.name}</strong></td>
+                          <td><span className="lead-status-pill bg-indigo-50 text-indigo-700 border-indigo-200">{opp.stage || 'Active'}</span></td>
+                          <td><strong>{opp.amount || opp.value ? `$${Number(opp.amount || opp.value).toLocaleString()}` : '-'}</strong></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="lead-empty-state">
+                  <Briefcase size={36} />
+                  <h4>No Linked Opportunities Found</h4>
+                  <p>When opportunities are created for this contact, they will automatically appear here.</p>
+                </div>
+              )}
+            </div>
           )}
 
-          <div className="lf-drawer-actions lf-drawer-actions--footer">
-            {canEdit && <button type="button" onClick={onEdit}><Edit3 size={15} />Edit</button>}
-          </div>
+          {/* TAB 3: ACTIVITIES & NOTES */}
+          {activeTab === 'activities' && (
+            <div className="lead-tab-panel activities-panel">
+              {/* Note Composer */}
+              <form onSubmit={handleAddNote} className="lead-note-composer">
+                <h4>Add Sales Note</h4>
+                <textarea
+                  placeholder="Record call summary or rep notes for this contact..."
+                  value={newNoteText}
+                  onChange={(e) => setNewNoteText(e.target.value)}
+                  rows={3}
+                  required
+                />
+                <button type="submit" className="lead-add-note-btn">
+                  <Send size={14} /> Save Note
+                </button>
+              </form>
+
+              {/* Notes List */}
+              {sessionNotes.length > 0 && (
+                <div className="mb-6">
+                  <h4 className="text-xs font-bold uppercase text-slate-500 mb-3">Notes & Comments</h4>
+                  <ul className="lead-notes-list">
+                    {sessionNotes.map((n) => (
+                      <li key={n.id} className="lead-note-card">
+                        <header className="lead-note-head">
+                          <strong className="lead-note-author">{n.author}</strong>
+                          <span className="lead-note-date">{n.date}</span>
+                        </header>
+                        <p className="lead-note-body">{n.text}</p>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Timeline */}
+              <h4 className="text-xs font-bold uppercase text-slate-500 mb-3">Activity Timeline</h4>
+              {timelineEvents.length > 0 ? (
+                <ul className="lead-timeline-tree">
+                  {timelineEvents.map((evt, idx) => {
+                    const IconComp = (evt.icon && (typeof evt.icon === 'function' || typeof evt.icon === 'object')) ? evt.icon : Clock;
+                    return (
+                      <li key={evt.id || idx} className="lead-timeline-item">
+                        <div className="lead-timeline-node">
+                          <IconComp size={15} />
+                        </div>
+                        <div className="lead-timeline-card">
+                          <header className="lead-timeline-card-head">
+                            <h4>{evt.title || evt.action || 'Contact Event'}</h4>
+                            <span className="lead-timeline-date">{evt.date || 'Recent'}</span>
+                          </header>
+                          <p className="lead-timeline-desc">{evt.description || evt.notes || 'Activity logged on this contact.'}</p>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <div className="lead-empty-state">
+                  <Activity size={36} />
+                  <h4>No Recorded Activity History</h4>
+                  <p>Activity events will be logged here as updates occur.</p>
+                </div>
+              )}
+            </div>
+          )}
+
         </div>
       </section>
     </div>
@@ -638,128 +1192,133 @@ function ContactDetailsPage({
 }
 
 function ContactDetail({ label, value }) {
-  return <div className="lf-detail-item"><span>{label}</span><strong>{value || '-'}</strong></div>;
+  return (
+    <div className="lf-detail-item">
+      <span>{label}</span>
+      <strong>{value || '-'}</strong>
+    </div>
+  );
 }
 
-function ConfirmDeleteContact({ contact, onCancel, onConfirm }) {
+function ConfirmDeleteContact({ contact, onCancel, onConfirm, isCompany = false }) {
   return (
     <div className="lf-modal-backdrop" role="presentation">
-      <section className="lf-modal" role="dialog" aria-modal="true" aria-labelledby="delete-contact-title">
+      <section className="lf-modal" role="dialog" aria-modal="true" aria-labelledby="lf-modal-title">
         <div className="lf-modal-head">
           <div>
-            <h2 id="delete-contact-title">Delete this contact?</h2>
+            <h2 id="lf-modal-title">Delete this {isCompany ? 'company' : 'contact'}?</h2>
             <p>Delete {getContactDisplayName(contact)}? This action cannot be undone.</p>
           </div>
-          <button aria-label="Close modal" onClick={onCancel}><X size={18} /></button>
+          <button aria-label="Close modal" onClick={onCancel}><X size={18}/></button>
         </div>
         <div className="lf-modal-actions">
-          <button type="button" onClick={onCancel}>Cancel</button>
-          <button type="button" className="danger" onClick={onConfirm}>Delete Contact</button>
+          <button onClick={onCancel}>Cancel</button>
+          <button className="danger" onClick={onConfirm}>Delete {isCompany ? 'Company' : 'Contact'}</button>
         </div>
       </section>
     </div>
   );
 }
 
-function getContactDisplayName(contact) {
-  return contact.contact || contact.name || contact.company || 'this contact';
-}
-
-function buildDefaultFilters(filters) {
-  return filters.reduce((defaults, filter) => ({
-    ...defaults,
-    [filter.key]: filter.defaultValue || filter.options[0],
+function buildDefaultFilters(config) {
+  return config.reduce((filters, filter) => ({
+    ...filters,
+    [filter.key]: filter.defaultValue || 'All',
   }), {});
 }
 
-function matchesDateFilter(value, selected, range = {}) {
-  if (selected === 'All') return true;
-  if (!value) return true;
-  const recordDate = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(recordDate.getTime())) return true;
-
+function matchesDateFilter(dateText, preset, customRange) {
+  if (!dateText) return false;
+  const date = new Date(`${dateText}T00:00:00`);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  if (selected === 'Today') {
-    return recordDate.getTime() === today.getTime();
+  if (preset === 'Today') {
+    return date.getTime() === today.getTime();
   }
-
-  if (selected === 'Last 7 Days') {
-    const start = new Date(today);
-    start.setDate(start.getDate() - 6);
-    return recordDate >= start && recordDate <= today;
+  if (preset === 'Last 7 Days') {
+    const limit = new Date(today);
+    limit.setDate(limit.getDate() - 7);
+    return date >= limit && date <= today;
   }
-
-  if (selected === 'This Month') {
-    return recordDate.getFullYear() === today.getFullYear() && recordDate.getMonth() === today.getMonth();
+  if (preset === 'This Month') {
+    return date.getFullYear() === today.getFullYear() && date.getMonth() === today.getMonth();
   }
-
-  if (selected === 'Custom Range') {
-    const from = range.from ? new Date(`${range.from}T00:00:00`) : null;
-    const to = range.to ? new Date(`${range.to}T00:00:00`) : null;
-    if (from && recordDate < from) return false;
-    if (to && recordDate > to) return false;
+  if (preset === 'Custom Range') {
+    if (customRange?.from && new Date(`${customRange.from}T00:00:00`) > date) return false;
+    if (customRange?.to && new Date(`${customRange.to}T00:00:00`) < date) return false;
+    return true;
   }
-
   return true;
 }
 
-function ContactFilter({ label, value, options, onChange, type, range, onRangeChange }) {
+function ContactFilter({ label, value, options, type, range, onChange, onRangeChange }) {
   const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const filteredOptions = options.filter((option) => String(option).toLowerCase().includes(query.trim().toLowerCase()));
-  const isDateRange = type === 'dateRange';
+  const [rangeOpen, setRangeOpen] = useState(false);
+
+  const displayLabel = type === 'dateRange' && value === 'Custom Range' && (range.from || range.to)
+    ? `${range.from || 'From'} to ${range.to || 'To'}`
+    : value;
 
   return (
-    <div className="lf-select-field searchable" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) { setOpen(false); setQuery(''); } }}>
-      <button type="button" className="lf-combo-button" onClick={() => setOpen((current) => !current)} aria-haspopup="listbox" aria-expanded={open}>
-        <span>{label}: {value}</span>
+    <div className="lf-select-field searchable date-range-filter" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) { setOpen(false); setRangeOpen(false); } }}>
+      <span>{label}</span>
+      <button type="button" className="lf-combo-button" onClick={() => setOpen((current) => !current)} aria-haspopup={type === 'dateRange' ? 'dialog' : 'listbox'} aria-expanded={open}>
+        <span>{label}: {displayLabel}</span>
         <ChevronDown size={15} />
       </button>
       {open && (
-        <div className={`lf-combo-menu${isDateRange ? ' lf-date-range-menu' : ''}`}>
-          {!isDateRange && (
-            <label className="lf-combo-search">
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`Search ${label.toLowerCase()}...`} autoFocus />
-            </label>
-          )}
-          {isDateRange && value === 'Custom Range' ? (
-            <div className="lf-custom-range-form">
-              <label>
-                <span>From</span>
-                <input type="date" value={range.from} onChange={(event) => onRangeChange?.({ ...range, from: event.target.value })} />
-              </label>
-              <label>
-                <span>To</span>
-                <input type="date" value={range.to} onChange={(event) => onRangeChange?.({ ...range, to: event.target.value })} />
-              </label>
-              <button type="button" className="selected" onClick={() => setOpen(false)}>Apply</button>
-            </div>
-          ) : (
-            <div role="listbox">
-              {filteredOptions.length > 0 ? filteredOptions.map((option) => (
-                <button type="button" key={option} className={option === value ? 'selected' : ''} onClick={() => { onChange(option); setQuery(''); if (option !== 'Custom Range') setOpen(false); }}>{option}</button>
-              )) : <p>No results</p>}
-            </div>
-          )}
+        <div className="lf-combo-menu lf-date-menu">
+          <div className="lf-date-presets" role="listbox">
+            {options.map((option) => (
+              <button
+                type="button"
+                key={option}
+                role="option"
+                aria-selected={option === value}
+                className={option === value ? 'selected' : ''}
+                onClick={() => {
+                  onChange(option);
+                  if (type === 'dateRange' && option === 'Custom Range') {
+                    setOpen(false);
+                    setRangeOpen(true);
+                  } else {
+                    setRangeOpen(false);
+                    setOpen(false);
+                  }
+                }}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {rangeOpen && (
+        <div className="lf-date-range-popover">
+          <div className="lf-date-range-fields">
+            <label><span>From</span><input type="date" value={range.from} onChange={(event) => onRangeChange({ ...range, from: event.target.value })} /></label>
+            <label><span>To</span><input type="date" value={range.to} onChange={(event) => onRangeChange({ ...range, to: event.target.value })} /></label>
+          </div>
+          <div className="lf-date-actions">
+            <button type="button" onClick={() => { onRangeChange({ from: '', to: '' }); onChange('All'); setOpen(false); setRangeOpen(false); }}>Clear</button>
+            <button type="button" className="selected" onClick={() => { setOpen(false); setRangeOpen(false); }}>Apply</button>
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-function makeEntityId(contacts, prefix = 'CT') {
-  const maxId = contacts.reduce((max, contact) => {
-    const value = String(contact.contactId || contact.id || '').match(new RegExp(`${prefix}-?(\\d+)`));
-    return value ? Math.max(max, Number(value[1])) : max;
-  }, 0);
-  return `${prefix}-${String(maxId + 1).padStart(4, '0')}`;
+function getContactDisplayName(contact) {
+  return contact.name || contact.contact || 'Unnamed Record';
 }
 
 function formatContactDate(value) {
   if (!value) return '-';
-  const date = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(date);
+  try {
+    return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(`${value}T00:00:00`));
+  } catch (e) {
+    return value;
+  }
 }

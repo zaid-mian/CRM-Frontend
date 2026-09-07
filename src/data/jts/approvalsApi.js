@@ -1,34 +1,24 @@
-const approvalRequests = [
-    {
-        id: 1,
-        companyLogo: 'SV',
-        companyName: 'Skyline Ventures',
-        ownerName: 'Zainab Ahmed',
-        email: 'zainab@skyline.com',
-        status: 'Pending',
-        createdAt: '2026-08-08',
-        phoneNumber: '+92 301 2222222',
-        country: 'Pakistan',
-        address: 'Blue Area, Islamabad',
-        cnic: '61101-1234567-1',
-    },
-    {
-        id: 2,
-        companyLogo: 'AS',
-        companyName: 'Apex Software Lab',
-        ownerName: 'Bilal Malik',
-        email: 'bilal@apexlab.io',
-        status: 'Pending',
-        createdAt: '2026-08-09',
-        phoneNumber: '+92 321 5555555',
-        country: 'Pakistan',
-        address: 'Shahrah-e-Faisal, Karachi',
-        cnic: '42101-7654321-2',
-    },
-];
-
-const delay = (value) => new Promise((resolve) => window.setTimeout(() => resolve(value), 180));
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
 
 export async function fetchApprovalRequests() {
-    return delay(approvalRequests);
+    const response = await fetch(`${API_BASE_URL}/api/admin/registrations/`, {
+        credentials: 'include'
+    });
+    const data = await response.json();
+    if (data.success && data.data) {
+        return data.data.map(item => ({
+            id: item.id,
+            companyLogo: item.organization_name ? item.organization_name.substring(0, 2).toUpperCase() : 'CO',
+            companyName: item.organization_name || '',
+            ownerName: item.owner_name || '',
+            email: item.owner_email || '',
+            status: item.status ? item.status.charAt(0).toUpperCase() + item.status.slice(1) : 'Pending',
+            createdAt: item.submitted_at || '',
+            phoneNumber: item.owner_profile?.phone_number || '',
+            country: item.owner_profile?.country || '',
+            address: item.owner_profile?.address || '',
+            cnic: item.owner_profile?.cnic || ''
+        }));
+    }
+    throw new Error(data.message || 'Failed to fetch registrations.');
 }

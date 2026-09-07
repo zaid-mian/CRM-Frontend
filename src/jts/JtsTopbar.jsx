@@ -60,12 +60,26 @@ function highlightMatch(text, query) {
   );
 }
 
-export default function Topbar({ onMenuClick, pageLabel, onLogout, onNavigate }) {
+export default function Topbar({ onMenuClick, pageLabel, onLogout, onNavigate, currentUser }) {
   const [profileOpen, setProfileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
   const blurTimer = useRef(null);
-  const initials = getInitials(adminUser.fullName);
+  
+  const initials = useMemo(() => {
+    if (!currentUser) return '';
+    const name = `${currentUser.first_name || ''} ${currentUser.last_name || ''}`.trim() || currentUser.username || 'User';
+    return name
+      .split(' ')
+      .map((part) => part[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase();
+  }, [currentUser]);
+
+  const fullName = currentUser ? (`${currentUser.first_name || ''} ${currentUser.last_name || ''}`.trim() || currentUser.username) : '';
+  const roleName = currentUser ? (currentUser.user_type === 'ADMIN' ? 'Administrator' : 'Standard User') : '';
+
   const pageTitle = pageLabel || 'Dashboard';
   const CurrentPageIcon = pageIcons[pageTitle] || LayoutGrid;
   const isCatalogDashboard = pageTitle === 'Catalog Dashboard';
@@ -211,26 +225,47 @@ export default function Topbar({ onMenuClick, pageLabel, onLogout, onNavigate })
             <HelpCircle size={18} />
           </button>
 
-          <div className="crm-profile-wrap">
-            <button
-              className="crm-navbar-profile"
-              type="button"
-              aria-label="Open account panel"
-              aria-haspopup="dialog"
-              aria-expanded={profileOpen}
-              onClick={() => setProfileOpen((current) => !current)}
-            >
-              <div className="crm-avatar" aria-hidden="true">{initials}</div>
-              <div className="crm-profile-meta">
-                <span className="crm-profile-name">{adminUser.fullName}</span>
-                <span className="crm-profile-role">{adminUser.role}</span>
-              </div>
-            </button>
-          </div>
+          {currentUser ? (
+            <div className="crm-profile-wrap">
+              <button
+                className="crm-navbar-profile"
+                type="button"
+                aria-label="Open account panel"
+                aria-haspopup="dialog"
+                aria-expanded={profileOpen}
+                onClick={() => setProfileOpen((current) => !current)}
+              >
+                <div className="crm-avatar" aria-hidden="true">{initials}</div>
+                <div className="crm-profile-meta">
+                  <span className="crm-profile-name">{fullName}</span>
+                  <span className="crm-profile-role">{roleName}</span>
+                </div>
+              </button>
+            </div>
+          ) : (
+            <div className="crm-profile-wrap">
+              <button
+                type="button"
+                style={{
+                  background: 'var(--color-primary)',
+                  color: '#fff',
+                  border: 'none',
+                  padding: '6.5px 16px',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  cursor: 'pointer'
+                }}
+                onClick={() => onNavigate?.('login')}
+              >
+                Sign In
+              </button>
+            </div>
+          )}
         </div>
       </header>
 
-      {profileOpen && (
+      {profileOpen && currentUser && (
         <div className="account-drawer-layer" role="presentation">
           <button
             className="account-drawer-backdrop"
@@ -242,8 +277,8 @@ export default function Topbar({ onMenuClick, pageLabel, onLogout, onNavigate })
             <header className="account-drawer-head">
               <div className="account-drawer-avatar">{initials}</div>
               <div>
-                <h2>{adminUser.fullName}</h2>
-                <p>User Id: 4</p>
+                <h2>{fullName}</h2>
+                <p>User Id: {currentUser.id}</p>
               </div>
             </header>
 

@@ -42,7 +42,7 @@ export function HighlightedText({ text, query }) {
   );
 }
 
-export function SearchableSelect({ label, value, options, onChange, placeholder = 'Search', className = 'field', icon, emptyText = 'No options found' }) {
+export function SearchableSelect({ label, value, options, onChange, placeholder = 'Search', className = 'field', icon, emptyText = 'No options found', disabled }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
 
@@ -59,21 +59,23 @@ export function SearchableSelect({ label, value, options, onChange, placeholder 
   };
 
   return (
-    <div className={`${className} searchable-filter`}>
+    <div className={`${className} searchable-filter ${disabled ? 'disabled-field' : ''}`} style={disabled ? { opacity: 0.7, pointerEvents: 'none' } : {}}>
       {icon}
       <span>{label}</span>
       <input
-        value={open ? query : value}
+        value={open && !disabled ? query : value}
         placeholder={placeholder}
-        onFocus={() => setOpen(true)}
+        onFocus={() => !disabled && setOpen(true)}
         onBlur={() => window.setTimeout(() => setOpen(false), 120)}
         onChange={(event) => {
+          if (disabled) return;
           setQuery(event.target.value);
           setOpen(true);
         }}
+        disabled={disabled}
       />
       <ChevronDown className="searchable-chevron" size={15} />
-      {open && (
+      {open && !disabled && (
         <div className="filter-menu">
           {filteredOptions.length > 0 ? filteredOptions.map((option) => (
             <button type="button" key={option} onMouseDown={() => selectOption(option)}>

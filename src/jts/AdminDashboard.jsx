@@ -3,6 +3,15 @@ import { ChevronDown, Edit3, Trash2, X } from 'lucide-react';
 import { fetchApprovalRequests } from '../data/jts/approvalsApi';
 import { StatusBadge } from './ui';
 
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
+
+function getCookie(name) {
+    return document.cookie
+        .split('; ')
+        .find((row) => row.startsWith(`${name}=`))
+        ?.split('=')[1];
+}
+
 const dateOptions = [
   { value: 'all', label: 'All Dates' },
   { value: 'today', label: 'Today' },
@@ -195,6 +204,10 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [selectedApplicationId, setSelectedApplicationId] = useState(null);
   const [deletingApplicationId, setDeletingApplicationId] = useState(null);
+  const [submitLoading, setSubmitLoading] = useState(false);
+  const [apiErrorMsg, setApiErrorMsg] = useState('');
+  const [rejectionReason, setRejectionReason] = useState('');
+
   const [filters, setFilters] = useState({
     status: 'all',
     owner: 'all',
@@ -205,18 +218,80 @@ export default function AdminDashboard() {
   const selectedApplication = applications.find((app) => app.id === selectedApplicationId);
   const deletingApplication = applications.find((app) => app.id === deletingApplicationId);
 
-  useEffect(() => {
-    fetchApprovalRequests()
-      .then((requests) => setApplications(requests))
-      .finally(() => setLoading(false));
-  }, []);
-
-  const handleApprove = (id) => {
-    setApplications(applications.map((app) => app.id === id ? { ...app, status: 'Approved' } : app));
+  const refreshList = async () => {
+    try {
+      setLoading(true);
+      const requests = await fetchApprovalRequests();
+      setApplications(requests);
+    } catch (err) {
+      // Ignore error list load
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleReject = (id) => {
-    setApplications(applications.map((app) => app.id === id ? { ...app, status: 'Rejected' } : app));
+  useEffect(() => {
+    refreshList();
+  }, []);
+
+  const handleApprove = async (id) => {
+    setSubmitLoading(true);
+    setApiErrorMsg('');
+    const csrfToken = getCookie('csrftoken');
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/registrations/${id}/approve/`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+                'Content-Type': 'application/json',
+                ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {})
+            }
+        });
+        const data = await res.json();
+        if (data.success) {
+            setSelectedApplicationId(null);
+            await refreshList();
+        } else {
+            setApiErrorMsg(data.message || 'Failed to approve registration.');
+        }
+    } catch (err) {
+        setApiErrorMsg('Network error approving registration.');
+    } finally {
+        setSubmitLoading(false);
+    }
+  };
+
+  const handleReject = async (id) => {
+    if (!rejectionReason.trim()) {
+        setApiErrorMsg('Rejection reason is required.');
+        return;
+    }
+    setSubmitLoading(true);
+    setApiErrorMsg('');
+    const csrfToken = getCookie('csrftoken');
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/registrations/${id}/reject/`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+                'Content-Type': 'application/json',
+                ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {})
+            },
+            body: JSON.stringify({ reason: rejectionReason.trim() })
+        });
+        const data = await res.json();
+        if (data.success) {
+            setSelectedApplicationId(null);
+            setRejectionReason('');
+            await refreshList();
+        } else {
+            setApiErrorMsg(data.message || 'Failed to reject registration.');
+        }
+    } catch (err) {
+        setApiErrorMsg('Network error rejecting registration.');
+    } finally {
+        setSubmitLoading(false);
+    }
   };
 
   const handleDelete = (id) => {
@@ -388,12 +463,42 @@ export default function AdminDashboard() {
               <p><span>Address</span>{selectedApplication.address}</p>
             </div>
 
+            <div style={{ marginTop: '16px' }}>
+                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                    Rejection Reason (Required for rejection)
+                </label>
+                <textarea
+                    value={rejectionReason}
+                    onChange={(e) => setRejectionReason(e.target.value)}
+                    rows={2}
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-teal-500 rounded-xl px-4 py-2 text-sm text-slate-100 outline-none transition"
+                    placeholder="Enter the reason for rejection..."
+                    disabled={submitLoading}
+                />
+            </div>
+
+            {apiErrorMsg && (
+                <div className="text-xs text-red-500 bg-red-950/20 border border-red-900/50 rounded-lg p-3 mt-3">
+                    {apiErrorMsg}
+                </div>
+            )}
+
             <footer className="approval-modal-actions">
-              <button type="button" className="approve" onClick={() => handleApprove(selectedApplication.id)}>
-                Approve
+              <button 
+                type="button" 
+                className="approve" 
+                onClick={() => handleApprove(selectedApplication.id)}
+                disabled={submitLoading}
+              >
+                {submitLoading ? 'Approving...' : 'Approve'}
               </button>
-              <button type="button" className="reject" onClick={() => handleReject(selectedApplication.id)}>
-                Reject
+              <button 
+                type="button" 
+                className="reject" 
+                onClick={() => handleReject(selectedApplication.id)}
+                disabled={submitLoading}
+              >
+                {submitLoading ? 'Rejecting...' : 'Reject'}
               </button>
             </footer>
           </section>

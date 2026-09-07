@@ -22,11 +22,12 @@ const PRODUCTS_PER_PAGE = 8;
 
 export default function UserDashboard({
   profile,
-  onProfileLoad,
   onTriggerPasswordChange,
   onOpenProfile,
   onLogout,
   searchQuery = '',
+  onLaunchCrm,
+  hasCrmAccess = true,
 }) {
   /* =====================================================
      STATE
@@ -239,24 +240,9 @@ export default function UserDashboard({
 
   const handleProductAction = (item) => {
     if (item.hasCrm) {
-      console.log(
-        'Launch CRM:',
-        item.product
-      );
-
-      /*
-        Later you can replace the console.log
-        with navigation.
-
-        Example:
-
-        window.location.href = '/crm';
-
-        OR
-
-        onLaunchProduct?.(item);
-      */
-
+      if (hasCrmAccess) {
+        onLaunchCrm?.();
+      }
       return;
     }
 
@@ -571,17 +557,18 @@ export default function UserDashboard({
                       type="button"
                       className={
                         item.hasCrm
-                          ? 'jts-product-button primary'
+                          ? (hasCrmAccess ? 'jts-product-button primary' : 'jts-product-button secondary opacity-50 cursor-not-allowed')
                           : 'jts-product-button secondary'
                       }
-                      onClick={() =>
-                        handleProductAction(
-                          item
-                        )
-                      }
+                      onClick={() => {
+                        if (!item.hasCrm || hasCrmAccess) {
+                          handleProductAction(item);
+                        }
+                      }}
+                      disabled={item.hasCrm && !hasCrmAccess}
                     >
                       {item.hasCrm
-                        ? 'Launch CRM'
+                        ? (hasCrmAccess ? 'Launch CRM' : 'Launch CRM (No Access)')
                         : 'View Product'}
                     </button>
 

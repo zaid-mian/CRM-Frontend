@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 
 import {
   ArrowLeft,
@@ -13,47 +13,7 @@ import {
   X,
 } from 'lucide-react';
 
-/* =========================================================
-   DEFAULT FRONTEND ROLE DATA
-
-   Temporary frontend data only.
-   Backend can replace this later.
-========================================================= */
-
-const roleSeed = [
-  {
-    id: 'RL-0001',
-    name: 'Administrator',
-    description: 'Full administrative access to the CRM workspace.',
-    status: 'Active',
-    assignedUsers: 2,
-    createdDate: '2026-08-01',
-  },
-  {
-    id: 'RL-0002',
-    name: 'Sales Manager',
-    description: 'Manage sales teams, leads, contacts, and opportunities.',
-    status: 'Active',
-    assignedUsers: 4,
-    createdDate: '2026-08-03',
-  },
-  {
-    id: 'RL-0003',
-    name: 'Sales Representative',
-    description: 'Manage assigned leads, contacts, and opportunities.',
-    status: 'Active',
-    assignedUsers: 8,
-    createdDate: '2026-08-05',
-  },
-  {
-    id: 'RL-0004',
-    name: 'Viewer',
-    description: 'Read-only access to selected CRM records.',
-    status: 'Inactive',
-    assignedUsers: 1,
-    createdDate: '2026-08-07',
-  },
-];
+import { authRequest, apiGet } from '../App';
 
 const blankRoleForm = {
   name: '',
@@ -61,57 +21,56 @@ const blankRoleForm = {
   status: 'Active',
 };
 
-/* =========================================================
-   MAIN COMPONENT
-========================================================= */
-
 export default function RolesPage({
-  roles: rolesProp,
-  setRoles: setRolesProp,
   setMessage,
   onManagePermissions,
   canCreate = true,
   canEdit = true,
   canDelete = true,
 }) {
-  /*
-    Supports both:
+  const [localRoles, setLocalRoles] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-    1. App.jsx controlled roles:
-       <RolesPage roles={roles} setRoles={setRoles} />
-
-    2. Standalone frontend roles:
-       <RolesPage />
-  */
-
-  const [localRoles, setLocalRoles] = useState(roleSeed);
-
-  const roles = Array.isArray(rolesProp)
-    ? rolesProp
-    : localRoles;
-
-  const updateRoles =
-    typeof setRolesProp === 'function'
-      ? setRolesProp
-      : setLocalRoles;
+  const roles = localRoles;
 
   const [filters, setFilters] = useState({
     status: 'All',
   });
 
   const [searchTerm, setSearchTerm] = useState('');
-
   const [addOpen, setAddOpen] = useState(false);
-
   const [selectedRole, setSelectedRole] = useState(null);
-
   const [editingRole, setEditingRole] = useState(null);
-
   const [deletingRole, setDeletingRole] = useState(null);
 
   const [form, setForm] = useState({
     ...blankRoleForm,
   });
+
+  const fetchRoles = async () => {
+    try {
+      setLoading(true);
+      const res = await apiGet('/api/roles/');
+      if (res.success && res.data) {
+        const mapped = res.data.map(role => ({
+          ...role,
+          createdDate: role.created_at ? role.created_at.slice(0, 10) : '',
+          status: 'Active',
+          assignedUsers: role.assigned_users || 0
+        }));
+        setLocalRoles(mapped);
+      }
+    } catch (err) {
+      console.error('Failed to fetch roles:', err);
+      setMessage?.(err.message || 'Failed to fetch roles from backend.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRoles();
+  }, []);
 
   /* =======================================================
      SUMMARY
@@ -228,17 +187,13 @@ export default function RolesPage({
      SAVE ROLE
   ======================================================= */
 
-  const saveRole = (event) => {
+  const saveRole = async (event) => {
     event.preventDefault();
 
-    const trimmedName =
-      form.name.trim();
+    const trimmedName = form.name.trim();
 
     if (!trimmedName) {
-      setMessage?.(
-        'Role name is required.'
-      );
-
+      setMessage?.('Role name is required.');
       return;
     }
 
@@ -252,119 +207,65 @@ export default function RolesPage({
     );
 
     if (duplicate) {
-      setMessage?.(
-        'A role with this name already exists.'
-      );
-
+      setMessage?.('A role with this name already exists.');
       return;
     }
 
-    /* ===============================================
-       EDIT EXISTING ROLE
-    =============================================== */
-
-    if (editingRole) {
-      const updatedRole = {
-        ...editingRole,
-
+    try {
+      const payload = {
         name: trimmedName,
-
-        description:
-          form.description.trim(),
-
-        status: form.status,
+        description: form.description.trim()
       };
 
-      updateRoles(
-        (currentRoles) =>
-          currentRoles.map(
-            (role) =>
-              role.id === editingRole.id
-                ? updatedRole
-                : role
-          )
-      );
-
-      setEditingRole(null);
-
-      setMessage?.(
-        'Role updated successfully.'
-      );
-
-      return;
+      if (editingRole) {
+        const res = await authRequest(`/api/roles/${editingRole.id}/`, {
+          method: 'PUT',
+          body: JSON.stringify(payload)
+        });
+        if (res.success) {
+          setMessage?.('Role updated successfully.');
+          setEditingRole(null);
+          fetchRoles();
+        }
+      } else {
+        const res = await authRequest('/api/roles/', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+        if (res.success) {
+          setMessage?.('Role created successfully.');
+          setAddOpen(false);
+          fetchRoles();
+        }
+      }
+    } catch (err) {
+      setMessage?.(err.message || 'Failed to save role.');
     }
-
-    /* ===============================================
-       CREATE NEW ROLE
-    =============================================== */
-
-    const newRole = {
-      id: makeRoleId(roles),
-
-      name: trimmedName,
-
-      description:
-        form.description.trim(),
-
-      status: form.status,
-
-      /*
-        Assigned Users should not be
-        manually entered in Role form.
-
-        Later backend should calculate
-        this from assigned users.
-      */
-      assignedUsers: 0,
-
-      createdDate: new Date()
-        .toISOString()
-        .slice(0, 10),
-    };
-
-    updateRoles(
-      (currentRoles) => [
-        newRole,
-        ...currentRoles,
-      ]
-    );
-
-    setAddOpen(false);
-
-    setMessage?.(
-      'Role created successfully.'
-    );
   };
 
   /* =======================================================
      DELETE ROLE
   ======================================================= */
 
-  const confirmDeleteRole = () => {
+  const confirmDeleteRole = async () => {
     if (!deletingRole) {
       return;
     }
 
-    updateRoles(
-      (currentRoles) =>
-        currentRoles.filter(
-          (role) =>
-            role.id !== deletingRole.id
-        )
-    );
-
-    if (
-      selectedRole?.id ===
-      deletingRole.id
-    ) {
-      setSelectedRole(null);
+    try {
+      await authRequest(`/api/roles/${deletingRole.id}/`, {
+        method: 'DELETE'
+      });
+      setMessage?.('Role deleted successfully.');
+      if (selectedRole?.id === deletingRole.id) {
+        setSelectedRole(null);
+      }
+      setDeletingRole(null);
+      fetchRoles();
+    } catch (err) {
+      setMessage?.(err.message || 'Failed to delete role.');
+      setDeletingRole(null);
     }
-
-    setDeletingRole(null);
-
-    setMessage?.(
-      'Role deleted successfully.'
-    );
   };
 
   /* =======================================================
@@ -372,28 +273,17 @@ export default function RolesPage({
   ======================================================= */
 
   const managePermissions = (role) => {
-    if (
-      typeof onManagePermissions ===
-      'function'
-    ) {
+    if (typeof onManagePermissions === 'function') {
       onManagePermissions(role);
-
       return;
     }
 
-    setMessage?.(
-      'Permission navigation is not configured.'
-    );
+    setMessage?.('Permission navigation is not configured.');
   };
 
-  /* =======================================================
-     VIEW PRIORITY
-
-     1. Add
-     2. Edit
-     3. Detail
-     4. Table
-  ======================================================= */
+  if (loading && roles.length === 0) {
+    return <div className="text-slate-400 p-8 text-center font-semibold animate-pulse">Loading roles...</div>;
+  }
 
   if (addOpen) {
     return (
@@ -420,11 +310,6 @@ export default function RolesPage({
   }
 
   if (selectedRole) {
-    /*
-      Find latest role data in case role
-      was updated after detail opened.
-    */
-
     const latestSelectedRole =
       roles.find(
         (role) =>
@@ -434,31 +319,13 @@ export default function RolesPage({
     return (
       <RoleDetailPage
         role={latestSelectedRole}
-        onBack={() =>
-          setSelectedRole(null)
-        }
-        onEdit={() =>
-          openEditRole(
-            latestSelectedRole
-          )
-        }
-        onManagePermissions={() =>
-          managePermissions(
-            latestSelectedRole
-          )
-        }
-        onDelete={() =>
-          setDeletingRole(
-            latestSelectedRole
-          )
-        }
+        onBack={() => setSelectedRole(null)}
+        onEdit={() => openEditRole(latestSelectedRole)}
+        onManagePermissions={() => managePermissions(latestSelectedRole)}
+        onDelete={() => setDeletingRole(latestSelectedRole)}
         deletingRole={deletingRole}
-        onCancelDelete={() =>
-          setDeletingRole(null)
-        }
-        onConfirmDelete={
-          confirmDeleteRole
-        }
+        onCancelDelete={() => setDeletingRole(null)}
+        onConfirmDelete={confirmDeleteRole}
         canEdit={canEdit}
         canDelete={canDelete}
       />
@@ -522,9 +389,7 @@ export default function RolesPage({
               </span>
 
               <strong className="contact-summary-green">
-                {
-                  summary.assignedUsers
-                }
+                {summary.assignedUsers}
               </strong>
             </article>
           </section>
@@ -549,9 +414,7 @@ export default function RolesPage({
                 placeholder="Search roles..."
                 value={searchTerm}
                 onChange={(event) =>
-                  setSearchTerm(
-                    event.target.value
-                  )
+                  setSearchTerm(event.target.value)
                 }
               />
 
@@ -667,18 +530,13 @@ export default function RolesPage({
             </thead>
 
             <tbody>
-              {filteredRoles.length >
-              0 ? (
+              {filteredRoles.length > 0 ? (
                 filteredRoles.map(
                   (role, index) => (
                     <tr
                       key={role.id}
                       className="clickable-row"
-                      onClick={() =>
-                        setSelectedRole(
-                          role
-                        )
-                      }
+                      onClick={() => setSelectedRole(role)}
                     >
 
                       {/* SERIAL */}
@@ -693,14 +551,9 @@ export default function RolesPage({
                         <button
                           type="button"
                           className="link-cell"
-                          onClick={(
-                            event
-                          ) => {
+                          onClick={(event) => {
                             event.stopPropagation();
-
-                            setSelectedRole(
-                              role
-                            );
+                            setSelectedRole(role);
                           }}
                         >
                           {role.id}
@@ -718,16 +571,8 @@ export default function RolesPage({
                       {/* DESCRIPTION */}
 
                       <td>
-                        <span
-                          title={
-                            role.description ||
-                            ''
-                          }
-                        >
-                          {truncateText(
-                            role.description,
-                            52
-                          )}
+                        <span title={role.description || ''}>
+                          {truncateText(role.description, 52)}
                         </span>
                       </td>
 
@@ -738,8 +583,7 @@ export default function RolesPage({
 
                           <Users size={14} />
 
-                          {role.assignedUsers ??
-                            0}
+                          {role.assignedUsers ?? 0}
 
                         </span>
                       </td>
@@ -747,19 +591,13 @@ export default function RolesPage({
                       {/* STATUS */}
 
                       <td>
-                        <RoleStatusBadge
-                          status={
-                            role.status
-                          }
-                        />
+                        <RoleStatusBadge status={role.status} />
                       </td>
 
                       {/* DATE */}
 
                       <td>
-                        {formatDate(
-                          role.createdDate
-                        )}
+                        {formatDate(role.createdDate)}
                       </td>
 
                       {/* ACTIONS */}
@@ -774,19 +612,12 @@ export default function RolesPage({
                             className="inline-action role-permission-action"
                             title="Manage Permissions"
                             aria-label={`Manage permissions for ${role.name}`}
-                            onClick={(
-                              event
-                            ) => {
+                            onClick={(event) => {
                               event.stopPropagation();
-
-                              managePermissions(
-                                role
-                              );
+                              managePermissions(role);
                             }}
                           >
-                            <KeyRound
-                              size={15}
-                            />
+                            <KeyRound size={15} />
                           </button>
 
                           {/* EDIT */}
@@ -797,19 +628,12 @@ export default function RolesPage({
                               className="inline-action inline-action--edit"
                               title="Edit Role"
                               aria-label={`Edit ${role.name}`}
-                              onClick={(
-                                event
-                              ) => {
+                              onClick={(event) => {
                                 event.stopPropagation();
-
-                                openEditRole(
-                                  role
-                                );
+                                openEditRole(role);
                               }}
                             >
-                              <Edit3
-                                size={15}
-                              />
+                              <Edit3 size={14} />
                             </button>
                           )}
 
@@ -821,19 +645,12 @@ export default function RolesPage({
                               className="inline-action inline-action--delete"
                               title="Delete Role"
                               aria-label={`Delete ${role.name}`}
-                              onClick={(
-                                event
-                              ) => {
+                              onClick={(event) => {
                                 event.stopPropagation();
-
-                                setDeletingRole(
-                                  role
-                                );
+                                setDeletingRole(role);
                               }}
                             >
-                              <Trash2
-                                size={15}
-                              />
+                              <Trash2 size={14} />
                             </button>
                           )}
 
@@ -845,11 +662,8 @@ export default function RolesPage({
                 )
               ) : (
                 <tr>
-                  <td
-                    colSpan={8}
-                    className="role-empty-table"
-                  >
-                    No roles match your current filters.
+                  <td colSpan={8} className="payment-empty-table text-center py-8">
+                    No roles match the current filters.
                   </td>
                 </tr>
               )}
@@ -868,12 +682,8 @@ export default function RolesPage({
       {deletingRole && (
         <DeleteRoleModal
           role={deletingRole}
-          onCancel={() =>
-            setDeletingRole(null)
-          }
-          onConfirm={
-            confirmDeleteRole
-          }
+          onCancel={() => setDeletingRole(null)}
+          onConfirm={confirmDeleteRole}
         />
       )}
 
@@ -882,9 +692,7 @@ export default function RolesPage({
 }
 
 /* =========================================================
-   ADD / EDIT ROLE PAGE
-
-   Permissions intentionally DO NOT exist here.
+   ROLE FORM PAGE
 ========================================================= */
 
 function RoleFormPage({
@@ -894,8 +702,7 @@ function RoleFormPage({
   onBack,
   onSubmit,
 }) {
-  const isEditing =
-    mode === 'edit';
+  const isEditing = mode === 'edit';
 
   return (
     <div className="lf-page leads-page roles-page">
@@ -912,15 +719,11 @@ function RoleFormPage({
 
             <div>
               <h2>
-                {isEditing
-                  ? 'Edit Role'
-                  : 'Add Role'}
+                {isEditing ? 'Edit Role' : 'Add Role'}
               </h2>
 
               <p>
-                {isEditing
-                  ? 'Update role information.'
-                  : 'Create a new CRM role.'}
+                {isEditing ? 'Update role information.' : 'Create a new CRM role.'}
               </p>
             </div>
 
@@ -969,9 +772,7 @@ function RoleFormPage({
                   setForm(
                     (current) => ({
                       ...current,
-
-                      name:
-                        event.target.value,
+                      name: event.target.value,
                     })
                   )
                 }
@@ -993,9 +794,7 @@ function RoleFormPage({
                   setForm(
                     (current) => ({
                       ...current,
-
-                      status:
-                        event.target.value,
+                      status: event.target.value,
                     })
                   )
                 }
@@ -1022,17 +821,12 @@ function RoleFormPage({
               <textarea
                 rows={5}
                 placeholder="Describe the purpose of this role..."
-                value={
-                  form.description
-                }
+                value={form.description}
                 onChange={(event) =>
                   setForm(
                     (current) => ({
                       ...current,
-
-                      description:
-                        event.target
-                          .value,
+                      description: event.target.value,
                     })
                   )
                 }
@@ -1060,13 +854,9 @@ function RoleFormPage({
               form="role-form"
               className="primary"
             >
-              <ShieldCheck
-                size={16}
-              />
+              <ShieldCheck size={16} />
 
-              {isEditing
-                ? 'Update Role'
-                : 'Save Role'}
+              {isEditing ? 'Update Role' : 'Save Role'}
             </button>
 
           </div>
@@ -1079,8 +869,6 @@ function RoleFormPage({
 
 /* =========================================================
    ROLE DETAIL PAGE
-
-   Same structural design as Contact Detail.
 ========================================================= */
 
 function RoleDetailPage({
@@ -1125,15 +913,13 @@ function RoleDetailPage({
 
           <div>
             <h2>
-              {role.name ||
-                'Role Detail'}
+              {role.name || 'Role Detail'}
             </h2>
 
             <p>
               {role.id || '-'}
               {' / '}
-              {role.description ||
-                'No description available.'}
+              {role.description || 'No description available.'}
             </p>
           </div>
 
@@ -1144,9 +930,7 @@ function RoleDetailPage({
             <button
               type="button"
               className="role-permission-detail-btn"
-              onClick={
-                onManagePermissions
-              }
+              onClick={onManagePermissions}
             >
               <KeyRound size={15} />
 
@@ -1214,8 +998,7 @@ function RoleDetailPage({
             </span>
 
             <strong>
-              {role.assignedUsers ??
-                0}
+              {role.assignedUsers ?? 0}
             </strong>
           </div>
 
@@ -1225,9 +1008,7 @@ function RoleDetailPage({
             </span>
 
             <strong>
-              {formatDate(
-                role.createdDate
-              )}
+              {formatDate(role.createdDate)}
             </strong>
           </div>
 
@@ -1283,8 +1064,7 @@ function RoleDetailPage({
                 </dt>
 
                 <dd>
-                  {role.assignedUsers ??
-                    0}
+                  {role.assignedUsers ?? 0}
                 </dd>
               </div>
 
@@ -1294,9 +1074,7 @@ function RoleDetailPage({
                 </dt>
 
                 <dd>
-                  {formatDate(
-                    role.createdDate
-                  )}
+                  {formatDate(role.createdDate)}
                 </dd>
               </div>
 
@@ -1306,8 +1084,7 @@ function RoleDetailPage({
                 </dt>
 
                 <dd>
-                  {role.description ||
-                    '-'}
+                  {role.description || '-'}
                 </dd>
               </div>
 
@@ -1319,8 +1096,6 @@ function RoleDetailPage({
 
         {/* =========================================
             PERMISSIONS SECTION
-
-            Permissions themselves are NOT managed here.
         ========================================= */}
 
         <section className="payment-record-section payment-record-history role-permissions-detail">
@@ -1336,9 +1111,7 @@ function RoleDetailPage({
           <button
             type="button"
             className="lf-btn lf-btn-primary role-manage-permissions-btn"
-            onClick={
-              onManagePermissions
-            }
+            onClick={onManagePermissions}
           >
             <KeyRound size={16} />
 
@@ -1356,12 +1129,8 @@ function RoleDetailPage({
       {deletingRole && (
         <DeleteRoleModal
           role={deletingRole}
-          onCancel={
-            onCancelDelete
-          }
-          onConfirm={
-            onConfirmDelete
-          }
+          onCancel={() => setDeletingRole(null)}
+          onConfirm={onConfirmDelete}
         />
       )}
 
@@ -1376,8 +1145,7 @@ function RoleDetailPage({
 function RoleStatusBadge({
   status,
 }) {
-  const active =
-    status === 'Active';
+  const active = status === 'Active';
 
   return (
     <span
@@ -1402,51 +1170,29 @@ function RoleFilterDropdown({
   options,
   onChange,
 }) {
-  const [open, setOpen] =
-    useState(false);
+  const [open, setOpen] = useState(false);
+  const [optionSearch, setOptionSearch] = useState('');
 
-  const [
-    optionSearch,
-    setOptionSearch,
-  ] = useState('');
-
-  const filteredOptions =
-    options.filter((option) =>
-      String(option)
-        .toLowerCase()
-        .includes(
-          optionSearch
-            .trim()
-            .toLowerCase()
-        )
-    );
+  const filteredOptions = options.filter((option) =>
+    option.toLowerCase().includes(optionSearch.toLowerCase())
+  );
 
   return (
     <div
       className="lf-select-field searchable"
       onBlur={(event) => {
-        if (
-          !event.currentTarget.contains(
-            event.relatedTarget
-          )
-        ) {
+        if (!event.currentTarget.contains(event.relatedTarget)) {
           setOpen(false);
-
           setOptionSearch('');
         }
       }}
     >
-
       <button
         type="button"
         className="lf-combo-button"
         aria-haspopup="listbox"
         aria-expanded={open}
-        onClick={() =>
-          setOpen(
-            (current) => !current
-          )
-        }
+        onClick={() => setOpen((current) => !current)}
       >
         <span>
           {label}: {value}
@@ -1464,14 +1210,10 @@ function RoleFilterDropdown({
 
             <input
               autoFocus
-              value={
-                optionSearch
-              }
+              value={optionSearch}
               placeholder={`Search ${label.toLowerCase()}...`}
               onChange={(event) =>
-                setOptionSearch(
-                  event.target.value
-                )
+                setOptionSearch(event.target.value)
               }
             />
 
@@ -1485,22 +1227,12 @@ function RoleFilterDropdown({
                   key={option}
                   type="button"
                   role="option"
-                  aria-selected={
-                    option === value
-                  }
-                  className={
-                    option === value
-                      ? 'selected'
-                      : ''
-                  }
+                  aria-selected={option === value}
+                  className={option === value ? 'selected' : ''}
                   onClick={() => {
                     onChange(option);
-
                     setOpen(false);
-
-                    setOptionSearch(
-                      ''
-                    );
+                    setOptionSearch('');
                   }}
                 >
                   {option}
@@ -1547,20 +1279,18 @@ function DeleteRoleModal({
             </h2>
 
             <p>
-              Delete{' '}
-              <strong>
-                {role.name}
-              </strong>
-              ? This action cannot be undone.
+              Delete {role.name}? This action cannot be undone.
             </p>
           </div>
 
           <button
             type="button"
-            aria-label="Close modal"
+            className="lf-modal-close"
+            aria-label="Close"
+            title="Close"
             onClick={onCancel}
           >
-            <X size={18} />
+            <X size={20} />
           </button>
 
         </div>
@@ -1576,11 +1306,9 @@ function DeleteRoleModal({
 
           <button
             type="button"
-            className="danger"
+            className="primary danger-btn"
             onClick={onConfirm}
           >
-            <Trash2 size={16} />
-
             Delete Role
           </button>
 
@@ -1596,60 +1324,21 @@ function DeleteRoleModal({
    HELPERS
 ========================================================= */
 
-function makeRoleId(
-  roles,
-  prefix = 'RL'
-) {
-  const maxId =
-    roles.reduce(
-      (max, role) => {
-        const match =
-          String(
-            role.id || ''
-          ).match(
-            new RegExp(
-              `${prefix}-?(\\d+)`
-            )
-          );
-
-        if (!match) {
-          return max;
-        }
-
-        return Math.max(
-          max,
-          Number(match[1])
-        );
-      },
-      0
-    );
-
-  return `${prefix}-${String(
-    maxId + 1
-  ).padStart(4, '0')}`;
-}
-
 function truncateText(
   value,
   maxLength
 ) {
-  const text =
-    String(value || '');
+  const text = String(value || '');
 
   if (!text) {
     return '—';
   }
 
-  if (
-    text.length <= maxLength
-  ) {
+  if (text.length <= maxLength) {
     return text;
   }
 
-  return `${text.slice(
-    0,
-    maxLength
-  )}...`;
+  return `${text.slice(0, maxLength)}...`;
 }
 
 function formatDate(value) {
@@ -1657,25 +1346,11 @@ function formatDate(value) {
     return '—';
   }
 
-  /*
-    Handles both:
-    2026-08-14
-    2026-08-14T12:30:00
-  */
+  const text = String(value).slice(0, 10);
 
-  const text =
-    String(value).slice(0, 10);
+  const date = new Date(`${text}T00:00:00`);
 
-  const date =
-    new Date(
-      `${text}T00:00:00`
-    );
-
-  if (
-    Number.isNaN(
-      date.getTime()
-    )
-  ) {
+  if (Number.isNaN(date.getTime())) {
     return text || '—';
   }
 
