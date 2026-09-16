@@ -78,9 +78,9 @@ flowchart TD
     AUTH_CHECK -->|Commercial Manager| BCUST
     AUTH_CHECK -->|CRM Administrator| ROLES
 
-    JTS_DASH <==|Domain Switcher Button| CRM_DASH
-    OPPS ==>|Convert to Subscription| BCUST
-    ROLES -.->|Configures 5 Granular Permissions| BSUB
+    JTS_DASH <-->|Domain Switcher| CRM_DASH
+    OPPS -->|Convert to Subscription| BCUST
+    ROLES -.->|Configures 5 Permissions| BSUB
 
     classDef authStyle fill:#1e1b4b,stroke:#6366f1,stroke-width:2px,color:#ffffff;
     classDef jtsStyle fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#78350f;
@@ -104,15 +104,15 @@ This diagram illustrates the user-side journey from lead creation to the 3-profi
 flowchart LR
     L_PAGE["1. Leads Page<br/>Click '+ Add Lead'<br/>(Imran Khan / IK Enterprises)"]
     L_DRAWER["2. Lead Details Drawer<br/>360° View of Contact,<br/>Tags & Communication"]
-    P_BOARD["3. Pipeline Kanban<br/>Standard vs Custom Pipelines<br/>Drag 'New' ➔ 'Contacted' ➔ 'Confirm'"]
+    P_BOARD["3. Pipeline Kanban<br/>Standard vs Custom Pipelines<br/>Drag New to Contacted to Confirm"]
     C_MODAL["4. Conversion Modal<br/>Auto-Linked Records Summary<br/>Click 'Convert & Create Opportunity'"]
     TRIAD["5. 3 Linked Profiles Created<br/>• Companies (IK Enterprises)<br/>• Contacts (Imran Khan)<br/>• Opportunities (Cloud Deal)"]
     WON["6. Won Opportunity Drawer<br/>Click 'Convert to Subscription'"]
 
     L_PAGE --> L_DRAWER
     L_PAGE --> P_BOARD
-    P_BOARD ==>|Drop in Confirm Stage| C_MODAL
-    C_MODAL ==>|One-Click Creation| TRIAD
+    P_BOARD -->|Drop in Confirm Stage| C_MODAL
+    C_MODAL -->|One-Click Creation| TRIAD
     TRIAD --> WON
 
     classDef stepStyle fill:#f8fafc,stroke:#64748b,stroke-width:2px,color:#0f172a;
@@ -151,10 +151,10 @@ flowchart TD
         ANALYTICS["BillingAnalyticsPage & BillingReportingPage<br/>• Real-Time MRR & ARR KPIs<br/>• Net MRR Movement Waterfall Chart<br/>• Multi-Tab Deep Audit Inspection"]
     end
 
-    CustFlow ==>|Provisions| SubFlow
-    SubFlow ==>|Generates| InvFlow
-    InvFlow ==>|Settled by| PayFlow
-    PayFlow ==>|Updates| AnalyticsFlow
+    CUST -->|Provisions| SUB
+    SUB -->|Generates| INV
+    INV -->|Settled by| PAY
+    PAY -->|Updates| ANALYTICS
 
     classDef flowStyle fill:#ffffff,stroke:#cbd5e1,stroke-width:2px,color:#0f172a;
     classDef highlightStyle fill:#eff6ff,stroke:#3b82f6,stroke-width:2px,color:#1e3a8a;
