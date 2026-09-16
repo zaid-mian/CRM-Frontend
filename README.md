@@ -12,9 +12,9 @@ This repository contains the authoritative React single-page application for **A
 
 ## 📑 Table of Contents
 - [1. User Interface Architecture Diagrams](#1-user-interface-architecture-diagrams)
-  - [Complete Ecosystem & Portal Routing](#11-complete-ecosystem--portal-routing)
-  - [CRM Sales Pipeline & Deal Conversion UI Flow](#12-crm-sales-pipeline--deal-conversion-ui-flow)
-  - [Standalone Billing & Revenue Analytics UI Flow](#13-standalone-billing--revenue-analytics-ui-flow)
+  - [1.1 Complete Ecosystem & Portal Routing](#11-complete-ecosystem--portal-routing)
+  - [1.2 CRM Sales Pipeline & Deal Conversion UI Flow](#12-crm-sales-pipeline--deal-conversion-ui-flow)
+  - [1.3 Standalone Billing & Revenue Analytics UI Flow](#13-standalone-billing--revenue-analytics-ui-flow)
 - [2. Feature Modules & Page Inventory](#2-feature-modules--page-inventory)
 - [3. Dynamic RBAC Navigation & Permission Guards](#3-dynamic-rbac-navigation--permission-guards)
 - [4. Dedicated Billing API Adapter (`billingApi.js`)](#4-dedicated-billing-api-adapter-billingapijs)
@@ -30,38 +30,38 @@ This diagram visualizes how the frontend routes authenticated users between the 
 
 ```mermaid
 flowchart TD
-    LOGIN["🔐 Authentication Screen (LoginPage)<br/>• Session Recovery &bull; Password Reset Flows"]
+    LOGIN["Authentication Screen (LoginPage)<br/>• Session Recovery &bull; Password Reset"]
 
-    subgraph PortalRouter ["🧭 Unified Portal Shell (App.jsx)"]
+    subgraph PortalRouter ["Unified Portal Shell (src/App.jsx)"]
         AUTH_CHECK{"User Identity & Type"}
         
-        subgraph JtsClientSection ["🛠️ JTS Client Portal (src/jts/)"]
-            JTS_LAND["🌐 Public Service Landing"]
-            JTS_REG["📝 Org Registration & CNIC Verification"]
-            JTS_DASH["📋 User Dashboard (Job Tracking)"]
-            JTS_ADMIN["⚙️ JTS Admin Fulfillment"]
+        subgraph JtsClientSection ["1. JTS Client Portal (src/jts/)"]
+            JTS_LAND["Public Service Landing"]
+            JTS_REG["Org Registration & CNIC Verification"]
+            JTS_DASH["User Dashboard (Job Tracking)"]
+            JTS_ADMIN["JTS Admin Fulfillment"]
         end
 
-        subgraph CrmSalesSection ["🎯 CRM Workspace (src/pages/)"]
-            CRM_DASH["📊 Sales Dashboard"]
-            LEADS["👥 Leads & Drawers"]
-            PIPE["🔄 Pipeline Board"]
-            ACCTS["🏢 Companies & Contacts"]
-            OPPS["💼 Opportunities"]
+        subgraph CrmSalesSection ["2. CRM Workspace (src/pages/)"]
+            CRM_DASH["Sales Dashboard"]
+            LEADS["Leads & Details Drawers"]
+            PIPE["Pipeline Kanban Board"]
+            ACCTS["Companies & Contacts"]
+            OPPS["Opportunities Management"]
         end
 
-        subgraph BillingSection ["💳 Standalone Billing Suite"]
-            BCUST["👤 Billing Customers"]
-            BSUB["📄 Subscriptions & Lifecycle"]
-            BINV["🧾 Invoices & PDF Export"]
-            BPAY["💰 Payments Ledger & Allocation"]
-            BREP["📈 Revenue Analytics"]
+        subgraph BillingSection ["3. Standalone Billing Suite"]
+            BCUST["Billing Customers"]
+            BSUB["Subscriptions & Lifecycle"]
+            BINV["Invoices & PDF Export"]
+            BPAY["Payments Ledger & Allocation"]
+            BREP["Revenue Analytics"]
         end
 
-        subgraph AdminSection ["🛡️ Admin Management"]
-            UREP["👥 User Performance Reporting"]
-            ROLES["🔐 Roles & Permissions Matrix"]
-            USERS["👥 Employee Directory"]
+        subgraph AdminSection ["4. Admin Management"]
+            UREP["User Performance Reporting"]
+            ROLES["Roles & Permissions Matrix"]
+            USERS["Employee Directory"]
         end
     end
 
@@ -72,7 +72,7 @@ flowchart TD
     AUTH_CHECK -->|CRM Administrator| AdminSection
 
     JtsClientSection <==|Domain Switcher Button| CrmSalesSection
-    CrmSalesSection ==>|💳 Convert to Subscription| BillingSection
+    CrmSalesSection ==>|Convert to Subscription| BillingSection
     AdminSection -.->|Configures 5 Granular Billing Permissions| BillingSection
 
     classDef authStyle fill:#1e1b4b,stroke:#6366f1,stroke-width:2px,color:#ffffff;
@@ -95,12 +95,12 @@ This diagram illustrates the user-side journey from lead creation to the 3-profi
 
 ```mermaid
 flowchart LR
-    L_PAGE["1️⃣ Leads Page<br/>Click '+ Add Lead'<br/>(Imran Khan / IK Enterprises)"]
-    L_DRAWER["2️⃣ Lead Details Drawer<br/>360° View of Contact,<br/>Tags & Communication"]
-    P_BOARD["3️⃣ Pipeline Kanban<br/>Standard vs Custom Pipelines<br/>Drag 'New' ➔ 'Contacted' ➔ 'Confirm'"]
-    C_MODAL["4️⃣ Conversion Modal<br/>Auto-Linked Records Summary<br/>Click 'Convert & Create Opportunity'"]
-    TRIAD["5️⃣ 3 Linked Profiles Created<br/>• Companies (IK Enterprises)<br/>• Contacts (Imran Khan)<br/>• Opportunities (Cloud Deal)"]
-    WON["6️⃣ Won Opportunity Drawer<br/>Click '💳 Convert to Subscription'"]
+    L_PAGE["1. Leads Page<br/>Click '+ Add Lead'<br/>(Imran Khan / IK Enterprises)"]
+    L_DRAWER["2. Lead Details Drawer<br/>360° View of Contact,<br/>Tags & Communication"]
+    P_BOARD["3. Pipeline Kanban<br/>Standard vs Custom Pipelines<br/>Drag 'New' ➔ 'Contacted' ➔ 'Confirm'"]
+    C_MODAL["4. Conversion Modal<br/>Auto-Linked Records Summary<br/>Click 'Convert & Create Opportunity'"]
+    TRIAD["5. 3 Linked Profiles Created<br/>• Companies (IK Enterprises)<br/>• Contacts (Imran Khan)<br/>• Opportunities (Cloud Deal)"]
+    WON["6. Won Opportunity Drawer<br/>Click 'Convert to Subscription'"]
 
     L_PAGE --> L_DRAWER
     L_PAGE --> P_BOARD
@@ -124,23 +124,23 @@ This diagram details the commercial interface across customers, subscriptions, i
 
 ```mermaid
 flowchart TD
-    subgraph CustFlow ["1️⃣ Billing Customers"]
+    subgraph CustFlow ["1. BILLING CUSTOMERS"]
         CUST["BillingCustomersPage<br/>• Search & Currency Filtering<br/>• CRM Link Metadata<br/>• Credit Balance Display"]
     end
 
-    subgraph SubFlow ["2️⃣ Subscriptions & Lifecycle"]
+    subgraph SubFlow ["2. SUBSCRIPTIONS & LIFECYCLE"]
         SUB["BillingSubscriptionsPage<br/>• Status Badges: LIVE / PAST_DUE / CANCELLED<br/>• Snapshot Unit Price Display<br/>• Modals: Pause, Resume, Amend, Cancel"]
     end
 
-    subgraph InvFlow ["3️⃣ Invoices & Documents"]
+    subgraph InvFlow ["3. INVOICES & DOCUMENTS"]
         INV["BillingInvoicesPage<br/>• Status: DRAFT / POSTED / PAID<br/>• Instant 'Download PDF' Button<br/>• Itemized Line Calculations"]
     end
 
-    subgraph PayFlow ["4️⃣ Payments Ledger & Allocations"]
+    subgraph PayFlow ["4. PAYMENTS LEDGER & ALLOCATIONS"]
         PAY["BillingPaymentsPage<br/>• '+ Record Payment' Modal<br/>• 'Allocate Payment' to Open Invoices<br/>• Automatic PAID Status Settlement"]
     end
 
-    subgraph AnalyticsFlow ["5️⃣ Revenue Intelligence"]
+    subgraph AnalyticsFlow ["5. REVENUE INTELLIGENCE"]
         ANALYTICS["BillingAnalyticsPage & BillingReportingPage<br/>• Real-Time MRR & ARR KPIs<br/>• Net MRR Movement Waterfall Chart<br/>• Multi-Tab Deep Audit Inspection"]
     end
 
@@ -166,7 +166,7 @@ flowchart TD
 - **Pipeline (`PipelinePage.jsx`)**: Drag-and-drop Kanban board supporting **Standard Pipeline** and **Custom Pipelines**, stage reordering, and the auto-link **Lead Conversion Modal**.
 - **Companies (`CompaniesPage.jsx`)**: Organizational account profiles with linked contacts and deals.
 - **Contacts (`ContactsPage.jsx`)**: Stakeholder directory with direct phone, email, and company associations.
-- **Opportunities (`OpportunitiesPage.jsx`)**: Commercial deals with stage history, contract scoping, and the `💳 Convert to Subscription` commercial bridge.
+- **Opportunities (`OpportunitiesPage.jsx`)**: Commercial deals with stage history, contract scoping, and the `Convert to Subscription` commercial bridge.
 - **Legacy Payments (`PaymentsPage.jsx`)**: Project milestone instalment records.
 
 ### Standalone Billing Domain
