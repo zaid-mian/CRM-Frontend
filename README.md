@@ -31,49 +31,56 @@ This diagram visualizes how the frontend routes authenticated users between the 
 ```mermaid
 flowchart TD
     LOGIN["Authentication Screen (LoginPage)<br/>• Session Recovery &bull; Password Reset"]
+    AUTH_CHECK{"User Identity & Role"}
 
-    subgraph PortalRouter ["Unified Portal Shell (src/App.jsx)"]
-        AUTH_CHECK{"User Identity & Type"}
-        
-        subgraph JtsClientSection ["1. JTS Client Portal (src/jts/)"]
-            JTS_LAND["Public Service Landing"]
-            JTS_REG["Org Registration & CNIC Verification"]
-            JTS_DASH["User Dashboard (Job Tracking)"]
-            JTS_ADMIN["JTS Admin Fulfillment"]
-        end
+    subgraph JtsClientSection ["1. JTS Client Portal (src/jts/)"]
+        JTS_LAND["Public Service Landing"]
+        JTS_REG["Org Registration & CNIC Verification"]
+        JTS_DASH["User Dashboard (Job Tracking)"]
+        JTS_ADMIN["JTS Admin Fulfillment"]
+        JTS_LAND --> JTS_REG
+        JTS_REG --> JTS_DASH
+        JTS_DASH <--> JTS_ADMIN
+    end
 
-        subgraph CrmSalesSection ["2. CRM Workspace (src/pages/)"]
-            CRM_DASH["Sales Dashboard"]
-            LEADS["Leads & Details Drawers"]
-            PIPE["Pipeline Kanban Board"]
-            ACCTS["Companies & Contacts"]
-            OPPS["Opportunities Management"]
-        end
+    subgraph CrmSalesSection ["2. CRM Workspace (src/pages/)"]
+        CRM_DASH["Sales Dashboard"]
+        LEADS["Leads & Details Drawers"]
+        PIPE["Pipeline Kanban Board"]
+        ACCTS["Companies & Contacts"]
+        OPPS["Opportunities Management"]
+        LEADS --> PIPE
+        PIPE --> ACCTS
+        ACCTS --> OPPS
+    end
 
-        subgraph BillingSection ["3. Standalone Billing Suite"]
-            BCUST["Billing Customers"]
-            BSUB["Subscriptions & Lifecycle"]
-            BINV["Invoices & PDF Export"]
-            BPAY["Payments Ledger & Allocation"]
-            BREP["Revenue Analytics"]
-        end
+    subgraph BillingSection ["3. Standalone Billing Suite"]
+        BCUST["Billing Customers"]
+        BSUB["Subscriptions & Lifecycle"]
+        BINV["Invoices & PDF Export"]
+        BPAY["Payments Ledger & Allocation"]
+        BREP["Revenue Analytics"]
+        BCUST --> BSUB
+        BSUB --> BINV
+        BINV --> BPAY
+        BPAY --> BREP
+    end
 
-        subgraph AdminSection ["4. Admin Management"]
-            UREP["User Performance Reporting"]
-            ROLES["Roles & Permissions Matrix"]
-            USERS["Employee Directory"]
-        end
+    subgraph AdminSection ["4. Admin Management"]
+        UREP["User Performance Reporting"]
+        ROLES["Roles & Permissions Matrix"]
+        USERS["Employee Directory"]
     end
 
     LOGIN --> AUTH_CHECK
-    AUTH_CHECK -->|JTS Org Owner| JtsClientSection
-    AUTH_CHECK -->|Sales Representative| CrmSalesSection
-    AUTH_CHECK -->|Commercial Manager| BillingSection
-    AUTH_CHECK -->|CRM Administrator| AdminSection
+    AUTH_CHECK -->|JTS Org Owner| JTS_DASH
+    AUTH_CHECK -->|Sales Representative| CRM_DASH
+    AUTH_CHECK -->|Commercial Manager| BCUST
+    AUTH_CHECK -->|CRM Administrator| ROLES
 
-    JtsClientSection <==|Domain Switcher Button| CrmSalesSection
-    CrmSalesSection ==>|Convert to Subscription| BillingSection
-    AdminSection -.->|Configures 5 Granular Billing Permissions| BillingSection
+    JTS_DASH <==|Domain Switcher Button| CRM_DASH
+    OPPS ==>|Convert to Subscription| BCUST
+    ROLES -.->|Configures 5 Granular Permissions| BSUB
 
     classDef authStyle fill:#1e1b4b,stroke:#6366f1,stroke-width:2px,color:#ffffff;
     classDef jtsStyle fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#78350f;
@@ -81,11 +88,11 @@ flowchart TD
     classDef billStyle fill:#fdf4ff,stroke:#a855f7,stroke-width:2px,color:#581c87;
     classDef adminStyle fill:#ecfdf5,stroke:#059669,stroke-width:2px,color:#065f46;
 
-    class LOGIN authStyle;
-    class JtsClientSection,JTS_LAND,JTS_REG,JTS_DASH,JTS_ADMIN jtsStyle;
-    class CrmSalesSection,CRM_DASH,LEADS,PIPE,ACCTS,OPPS crmStyle;
-    class BillingSection,BCUST,BSUB,BINV,BPAY,BREP billStyle;
-    class AdminSection,UREP,ROLES,USERS adminStyle;
+    class LOGIN,AUTH_CHECK authStyle;
+    class JTS_LAND,JTS_REG,JTS_DASH,JTS_ADMIN jtsStyle;
+    class CRM_DASH,LEADS,PIPE,ACCTS,OPPS crmStyle;
+    class BCUST,BSUB,BINV,BPAY,BREP billStyle;
+    class UREP,ROLES,USERS adminStyle;
 ```
 
 ---
