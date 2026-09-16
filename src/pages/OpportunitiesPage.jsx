@@ -27,8 +27,12 @@ import {
   CheckCircle2,
   AlertCircle,
   Check,
+  CreditCard,
+  PackageCheck,
+  Zap,
 } from 'lucide-react';
 import { authRequest, apiGet } from '../App';
+import { provisionWonOpportunity, fetchPricingPlans } from '../utils/billingApi';
 
 export default function OpportunitiesPage({ currentUser, setMessage, canCreate = true, canEdit = true, canDelete = true }) {
   const [opportunitiesList, setOpportunitiesList] = useState([]);
@@ -61,6 +65,109 @@ export default function OpportunitiesPage({ currentUser, setMessage, canCreate =
   const [drawerStages, setDrawerStages] = useState([]);
   const [customFormFields, setCustomFormFields] = useState([]);
   const [savingDrawer, setSavingDrawer] = useState(false);
+
+  // Phase 15 Closed-Won Subscription Conversion States
+  const [conversionModalOpen, setConversionModalOpen] = useState(false);
+  const [conversionOpp, setConversionOpp] = useState(null);
+  const [availablePlans, setAvailablePlans] = useState([]);
+  const [selectedPlanId, setSelectedPlanId] = useState('');
+  const [planQuantity, setPlanQuantity] = useState(1);
+  const [conversionStartDate, setConversionStartDate] = useState(new Date().toISOString().slice(0, 10));
+  const [collectionMethod, setCollectionMethod] = useState('CHARGE_AUTOMATIC');
+  const [paymentTermsDays, setPaymentTermsDays] = useState(0);
+  const [converting, setConverting] = useState(false);
+  const [loadingPlans, setLoadingPlans] = useState(false);
+
+  const closeConversionModal = () => {
+    if (converting) return;
+    setConversionModalOpen(false);
+    setConversionOpp(null);
+    setSelectedPlanId('');
+    setAvailablePlans([]);
+    setLoadingPlans(false);
+    setConverting(false);
+  };
+
+  const handleOpenConversionModal = async (opp) => {
+    setConversionOpp(opp);
+    setConversionModalOpen(true);
+    setConversionStartDate(new Date().toISOString().slice(0, 10));
+    setPlanQuantity(1);
+    setCollectionMethod('CHARGE_AUTOMATIC');
+    setPaymentTermsDays(0);
+    setSelectedPlanId('');
+    setLoadingPlans(true);
+
+    try {
+      const plans = await fetchPricingPlans();
+      const activePlans = Array.isArray(plans) ? plans.filter(p => p && p.is_active !== false) : [];
+      setAvailablePlans(activePlans);
+      if (activePlans.length > 0) {
+        setSelectedPlanId(String(activePlans[0].id));
+      }
+    } catch (err) {
+      console.error('Failed to load pricing plans for opportunity conversion:', err);
+      setAvailablePlans([]);
+    } finally {
+      setLoadingPlans(false);
+    }
+  };
+
+  const handleConfirmConversion = async (e) => {
+    e?.preventDefault();
+    if (!conversionOpp || !selectedPlanId || converting || loadingPlans) return;
+    try {
+      setConverting(true);
+      const companyId = conversionOpp.company || conversionOpp.company_id;
+      const company = companiesList.find(c => String(c.id) === String(companyId));
+
+      const payload = {
+        opportunity_id: conversionOpp.id,
+        company_id: companyId || null,
+        company_name: company?.name || conversionOpp.name,
+        contact_email: company?.email || '',
+        plan_id: Number(selectedPlanId),
+        plan_quantity: Number(planQuantity) || 1,
+        start_date: conversionStartDate,
+        collection_method: collectionMethod,
+        payment_terms_days: Number(paymentTermsDays) || 0,
+        add_ons: [],
+      };
+
+      const res = await provisionWonOpportunity(payload);
+      setMessage?.(`Successfully provisioned subscription ${res.subscription_number} (${res.status}) for opportunity #${res.opportunity_id}!`);
+
+      const updatedOpp = {
+        ...conversionOpp,
+        custom_values: {
+          ...(conversionOpp.custom_values || {}),
+          billing_subscription_id: res.subscription_id,
+          billing_subscription_number: res.subscription_number,
+          billing_customer_id: res.customer_id,
+          billing_customer_number: res.customer_number,
+        }
+      };
+
+      setActiveDrawerCard(prev => (prev && prev.id === conversionOpp.id ? updatedOpp : prev));
+      setOpportunitiesList(prev => prev.map(o => o.id === conversionOpp.id ? updatedOpp : o));
+
+      try {
+        await authRequest(`/api/opportunities/${conversionOpp.id}/`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            custom_values: updatedOpp.custom_values
+          })
+        });
+      } catch (patchErr) {
+        console.warn('Could not persist custom_values to CRM opportunity backend:', patchErr);
+      }
+
+      closeConversionModal();
+    } catch (err) {
+      setMessage?.(err.message || 'Failed to convert opportunity to billing subscription.');
+      setConverting(false);
+    }
+  };
 
   const fetchWorkspaceData = async () => {
     try {
@@ -425,6 +532,7 @@ export default function OpportunitiesPage({ currentUser, setMessage, canCreate =
                   getOwnerName={getOwnerName}
                   canEdit={canEdit}
                   onEditClick={() => setDrawerMode('edit')}
+                  onConvertToSubscription={handleOpenConversionModal}
                   onToast={setMessage}
                 />
               ) : (
@@ -636,6 +744,178 @@ export default function OpportunitiesPage({ currentUser, setMessage, canCreate =
           </section>
         </div>
       )}
+
+      {/* PHASE 15: CONVERT TO SUBSCRIPTION MODAL */}
+      {conversionModalOpen && conversionOpp && (
+        <div
+          className="crm-sb-modal-backdrop"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.65)',
+            zIndex: 20000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backdropFilter: 'blur(4px)',
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              closeConversionModal();
+            }
+          }}
+        >
+          <div
+            className="crm-sb-modal"
+            style={{
+              backgroundColor: '#ffffff',
+              borderRadius: '12px',
+              padding: '24px',
+              maxWidth: '520px',
+              width: '92%',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+              border: '1px solid #e2e8f0',
+              zIndex: 20001,
+              position: 'relative',
+            }}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{ width: '36px', height: '36px', borderRadius: '8px', backgroundColor: '#ecfdf5', color: '#059669', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <CreditCard size={20} />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '17px', fontWeight: '700', color: '#0f172a' }}>Convert to Standalone Subscription</h3>
+                  <p style={{ margin: 0, fontSize: '12px', color: '#64748b' }}>Opportunity #{conversionOpp.id} • {conversionOpp.name}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeConversionModal}
+                disabled={converting}
+                aria-label="Close conversion modal"
+                style={{ background: 'none', border: 'none', cursor: converting ? 'not-allowed' : 'pointer', color: '#94a3b8' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmConversion} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <label className="lf-field">
+                <span>Catalog Pricing Plan*</span>
+                <select
+                  required
+                  disabled={loadingPlans || converting}
+                  value={selectedPlanId}
+                  onChange={(e) => setSelectedPlanId(e.target.value)}
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                >
+                  {loadingPlans ? (
+                    <option value="">Loading active catalog plans...</option>
+                  ) : availablePlans.length > 0 ? (
+                    availablePlans.map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} — ${Number(p.price || 0).toFixed(2)} / {p.billing_cycle || 'month'}
+                      </option>
+                    ))
+                  ) : (
+                    <option value="">No active catalog plans found</option>
+                  )}
+                </select>
+              </label>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <label className="lf-field">
+                  <span>Start Date</span>
+                  <input
+                    type="date"
+                    required
+                    disabled={converting}
+                    value={conversionStartDate}
+                    onChange={(e) => setConversionStartDate(e.target.value)}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                  />
+                </label>
+
+                <label className="lf-field">
+                  <span>Plan Quantity</span>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    disabled={converting}
+                    value={planQuantity}
+                    onChange={(e) => setPlanQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                  />
+                </label>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <label className="lf-field">
+                  <span>Collection Method</span>
+                  <select
+                    disabled={converting}
+                    value={collectionMethod}
+                    onChange={(e) => setCollectionMethod(e.target.value)}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                  >
+                    <option value="CHARGE_AUTOMATIC">Charge Automatic</option>
+                    <option value="SEND_INVOICE">Send Invoice</option>
+                  </select>
+                </label>
+
+                <label className="lf-field">
+                  <span>Payment Terms (Days)</span>
+                  <input
+                    type="number"
+                    min="0"
+                    disabled={converting}
+                    value={paymentTermsDays}
+                    onChange={(e) => setPaymentTermsDays(Math.max(0, parseInt(e.target.value) || 0))}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                  />
+                </label>
+              </div>
+
+              <div style={{ backgroundColor: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '12px', color: '#475569' }}>
+                <p style={{ margin: 0 }}>
+                  ⚡ <strong>Standalone Billing Authority:</strong> Provisioning will resolve/create the Billing Customer, attach the commercial subscription, activate entitlements, and record an immutable audit trail.
+                </p>
+              </div>
+
+              <div className="lf-modal-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
+                <button
+                  type="button"
+                  onClick={closeConversionModal}
+                  disabled={converting}
+                  style={{ padding: '8px 16px', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#fff', cursor: converting ? 'not-allowed' : 'pointer' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={converting || loadingPlans || !selectedPlanId}
+                  style={{
+                    padding: '8px 18px',
+                    borderRadius: '6px',
+                    background: '#059669',
+                    color: '#fff',
+                    border: 'none',
+                    fontWeight: '600',
+                    cursor: converting || loadingPlans || !selectedPlanId ? 'not-allowed' : 'pointer',
+                    opacity: converting || loadingPlans || !selectedPlanId ? 0.6 : 1,
+                  }}
+                >
+                  {converting ? 'Provisioning...' : (loadingPlans ? 'Loading Plans...' : 'Confirm & Provision')}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -649,6 +929,7 @@ function OpportunityDrawerDetailView({
   getOwnerName,
   canEdit,
   onEditClick,
+  onConvertToSubscription,
 }) {
   if (!opp) return null;
 
@@ -670,8 +951,14 @@ function OpportunityDrawerDetailView({
   const expectedRevVal = opp.expected_revenue != null ? Number(opp.expected_revenue) : Math.round(amountVal * (probabilityVal / 100));
 
   // Outcome status flags
-  const isWon = opp.won || String(opp.stage).toUpperCase() === 'WON' || String(opp.stage).toUpperCase() === 'CLOSED WON';
-  const isLost = Boolean(opp.lost_reason) || String(opp.stage).toUpperCase() === 'LOST' || String(opp.stage).toUpperCase() === 'CLOSED LOST';
+  const stageUpper = String(opp.stage || opp.pipeline_stage_name || '').toUpperCase().replace(/[\s_-]+/g, '');
+  const isWon = opp.won || stageUpper === 'WON' || stageUpper === 'CLOSEDWON';
+  const isLost = Boolean(opp.lost_reason) || stageUpper === 'LOST' || stageUpper === 'CLOSEDLOST';
+
+  const hasSubscription = Boolean(
+    opp.custom_values?.billing_subscription_id ||
+    opp.custom_values?.billing_subscription_number
+  );
 
   const getStageBadgeStyle = () => {
     if (isWon) return 'bg-emerald-50 text-emerald-700 border-emerald-200';
@@ -754,23 +1041,50 @@ function OpportunityDrawerDetailView({
         </div>
       </section>
 
-      {/* ── TERMINAL OUTCOME CALLOUT ── */}
+      {/* ── TERMINAL OUTCOME & BILLING INTEGRATION CALLOUT ── */}
       {isWon && (
-        <div className="p-4 mb-4 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 flex items-center gap-3">
-          <CheckCircle2 size={24} className="text-emerald-600 flex-shrink-0" />
-          <div>
-            <h4 className="font-bold text-sm text-emerald-900">Closed Won Opportunity</h4>
-            <p className="text-xs text-emerald-700 mt-1">This deal was successfully won! Total deal value of ${amountVal.toLocaleString()} has been converted into won revenue.</p>
+        <div className="p-4 mb-4 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 flex flex-col gap-3" style={{ padding: '16px', marginBottom: '16px', borderRadius: '8px', backgroundColor: '#ecfdf5', border: '1px solid #a7f3d0' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <CheckCircle2 size={24} style={{ color: '#059669', flexShrink: 0 }} />
+              <div>
+                <h4 style={{ margin: 0, fontWeight: '700', fontSize: '14px', color: '#065f46' }}>Closed Won Opportunity</h4>
+                <p style={{ margin: '2px 0 0', fontSize: '12px', color: '#047857' }}>
+                  Deal won! Total value of ${amountVal.toLocaleString()} is ready for Standalone Billing provisioning.
+                </p>
+              </div>
+            </div>
+
+            {hasSubscription ? (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 12px', borderRadius: '9999px', fontSize: '12px', fontWeight: '600', backgroundColor: '#d1fae5', color: '#065f46', border: '1px solid #6ee7b7' }}>
+                <PackageCheck size={15} /> Subscription Active (#{opp.custom_values?.billing_subscription_number || opp.custom_values?.billing_subscription_id})
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onConvertToSubscription?.(opp)}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 14px', backgroundColor: '#059669', color: '#ffffff', borderRadius: '6px', fontSize: '12px', fontWeight: '600', border: 'none', cursor: 'pointer', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}
+              >
+                <CreditCard size={15} /> Convert to Subscription
+              </button>
+            )}
           </div>
+
+          {hasSubscription && (
+            <div style={{ fontSize: '12px', color: '#065f46', backgroundColor: 'rgba(255, 255, 255, 0.75)', padding: '8px 12px', borderRadius: '6px', border: '1px solid #a7f3d0', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px' }}>
+              <span>Agreement: <strong>{opp.custom_values?.billing_subscription_number || `SUB #${opp.custom_values?.billing_subscription_id}`}</strong></span>
+              <span>Billing Customer: <strong>{opp.custom_values?.billing_customer_number || `CUST #${opp.custom_values?.billing_customer_id}`}</strong></span>
+            </div>
+          )}
         </div>
       )}
 
       {isLost && (
-        <div className="p-4 mb-4 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 flex items-center gap-3">
-          <AlertCircle size={24} className="text-rose-600 flex-shrink-0" />
+        <div className="p-4 mb-4 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 flex items-center gap-3" style={{ padding: '16px', marginBottom: '16px', borderRadius: '8px', backgroundColor: '#fff1f2', border: '1px solid #fecdd3' }}>
+          <AlertCircle size={24} style={{ color: '#e11d48', flexShrink: 0 }} />
           <div>
-            <h4 className="font-bold text-sm text-rose-900">Closed Lost Opportunity</h4>
-            <p className="text-xs text-rose-700 mt-1">
+            <h4 style={{ margin: 0, fontWeight: '700', fontSize: '14px', color: '#9f1239' }}>Closed Lost Opportunity</h4>
+            <p style={{ margin: '2px 0 0', fontSize: '12px', color: '#be123c' }}>
               {opp.lost_reason ? `Reason: "${opp.lost_reason}"` : 'This deal was marked closed lost.'}
             </p>
           </div>

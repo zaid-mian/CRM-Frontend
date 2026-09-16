@@ -39,6 +39,12 @@ import PermissionsPage from './pages/PermissionsPage';
 import UsersPage from './pages/UsersPage';
 import OpportunitiesPage from './pages/OpportunitiesPage';
 import UserReportingPage from './pages/UserReportingPage';
+import BillingReportingPage from './pages/BillingReportingPage';
+import BillingCustomersPage from './pages/BillingCustomersPage';
+import BillingSubscriptionsPage from './pages/BillingSubscriptionsPage';
+import BillingInvoicesPage from './pages/BillingInvoicesPage';
+import BillingPaymentsPage from './pages/BillingPaymentsPage';
+import BillingAnalyticsPage from './pages/BillingAnalyticsPage';
 import JtsPortalSection from './jts/JtsPortalSection';
 import {
   leadBackendToUi,
@@ -47,6 +53,11 @@ import {
   opportunityBackendToUi,
   paymentBackendToUi,
 } from './utils/adapters';
+import * as billingApi from './utils/billingApi';
+if (typeof window !== 'undefined') {
+  window.billingApi = billingApi;
+}
+
 export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
 
 const NAV_ITEMS = [
@@ -57,11 +68,18 @@ const NAV_ITEMS = [
   { key: 'opportunities', label: 'Opportunities', Icon: FileText, operational: true },
   { key: 'pipeline', label: 'Pipeline', Icon: BarChart3, operational: true },
   { key: 'payments', label: 'Payments', Icon: CreditCard, operational: true },
+  { key: 'billing-analytics', label: 'Revenue Analytics', Icon: TrendingUp, operational: true },
+  { key: 'billing-customers', label: 'Billing Customers', Icon: UserRound, operational: true },
+  { key: 'billing-subscriptions', label: 'Subscriptions', Icon: FileText, operational: true },
+  { key: 'billing-invoices', label: 'Invoices', Icon: FileText, operational: true },
+  { key: 'billing-payments', label: 'Payments Ledger', Icon: CreditCard, operational: true },
   { key: 'user-reporting', label: 'User Reporting', Icon: BarChart2, adminOnly: true },
+  { key: 'billing-reporting', label: 'Billing Reporting', Icon: DollarSign, adminOnly: true },
   { key: 'users', label: 'Users', Icon: Users, adminOnly: true },
   { key: 'roles', label: 'Roles', Icon: ShieldCheck, adminOnly: true },
   { key: 'permissions', label: 'Permissions', Icon: Lock, adminOnly: true },
 ];
+
 
 export default function App() {
   const [authStatus, setAuthStatus] = useState('checking');
@@ -170,13 +188,18 @@ export default function App() {
     };
   }, []);
 
-  const isErrorMessage = message.includes('required') || message.includes('exists');
+  const messageText = typeof message === 'object' && message !== null
+    ? (message.text || message.message || JSON.stringify(message))
+    : String(message || '');
+  const isErrorMessage = typeof message === 'object' && message !== null
+    ? message.type === 'error'
+    : (messageText.toLowerCase().includes('required') || messageText.toLowerCase().includes('exists') || messageText.toLowerCase().includes('fail') || messageText.toLowerCase().includes('error'));
 
   useEffect(() => {
-    if (!message) return undefined;
+    if (!messageText) return undefined;
     const timer = window.setTimeout(() => setMessage(''), 4000);
     return () => window.clearTimeout(timer);
-  }, [message]);
+  }, [messageText]);
   /*
     useEffect(() => {
       if (!currentUser) return undefined;
@@ -240,9 +263,10 @@ export default function App() {
 
   const hasPermission = (moduleName, action) => {
     if (!currentUser) return false;
-    if (currentUser.user_type === 'ADMIN') return true;
+    if (currentUser.user_type === 'ADMIN' || currentUser.is_staff || currentUser.is_superuser) return true;
     const perms = currentUser.permissions?.[moduleName];
-    return perms ? !!perms[action] : false;
+    if (perms && perms[action] !== undefined) return !!perms[action];
+    return false;
   };
 
   const isManagerOrAdmin = (user) => {
@@ -255,12 +279,17 @@ export default function App() {
 
   const hasViewPermission = (pageKey) => {
     if (!currentUser) return false;
-    if (currentUser.user_type === 'ADMIN') return true;
-    if (pageKey === 'user-reporting') {
+    if (currentUser.user_type === 'ADMIN' || currentUser.is_staff || currentUser.is_superuser) return true;
+    if (pageKey === 'user-reporting' || pageKey === 'billing-reporting') {
       return false; // ADMIN-ONLY
     }
     if (pageKey === 'roles' || pageKey === 'permissions' || pageKey === 'users') return false;
     if (pageKey === 'dashboard' || pageKey === 'jts-portal') return true;
+    if (pageKey === 'billing-analytics') return hasPermission('billing_analytics', 'view');
+    if (pageKey === 'billing-customers') return hasPermission('billing_customers', 'view');
+    if (pageKey === 'billing-subscriptions') return hasPermission('billing_subscriptions', 'view');
+    if (pageKey === 'billing-invoices') return hasPermission('billing_invoices', 'view');
+    if (pageKey === 'billing-payments') return hasPermission('billing_payments', 'view');
     const moduleName = (pageKey === 'pipelineStage' || pageKey === 'pipeline') ? 'pipeline' : pageKey;
     const perms = currentUser.permissions?.[moduleName];
     return perms ? !!perms.view : false;
@@ -276,9 +305,15 @@ export default function App() {
     pipelineStage: activeStagePage || dynamicStagePage,
     payments: 'Payments',
     'user-reporting': 'User Reporting',
+    'billing-reporting': 'Billing Reporting',
     users: 'Users',
     roles: 'Roles',
     permissions: 'Permissions',
+    'billing-analytics': 'Revenue Analytics',
+    'billing-customers': 'Billing Customers',
+    'billing-subscriptions': 'Subscriptions',
+    'billing-invoices': 'Invoices',
+    'billing-payments': 'Payments Ledger',
     'jts-portal': 'JTS Portal',
   };
   const pageTitleOverride = page === 'leads' && leadDetailOpen
@@ -298,7 +333,7 @@ export default function App() {
   const visibleNavItems = baseNavItems.filter((item) => {
     if (!currentUser) return false;
 
-    if (item.key === 'user-reporting') {
+    if (item.key === 'user-reporting' || item.key === 'billing-reporting') {
       return currentUser.user_type === 'ADMIN';
     }
 
@@ -309,12 +344,9 @@ export default function App() {
 
     // CRM User Sidebar layout
     if (item.adminOnly) return false;
-    if (item.key === 'dashboard') return true;
-
-    const moduleName = (item.key === 'pipelineStage' || item.key === 'pipeline') ? 'pipeline' : item.key;
-    const perms = currentUser.permissions?.[moduleName];
-    return perms ? !!perms.view : false;
+    return hasViewPermission(item.key);
   });
+
 
   const handleLogin = async ({ username, password }) => {
     // 1. Authenticate with backend API
@@ -447,14 +479,14 @@ export default function App() {
   if (page === 'jts-portal') {
     return (
       <div className="jts-portal-wrapper relative w-full min-h-screen">
-        {message && (
+        {Boolean(messageText) && (
           <div
             role="alert"
             aria-live="polite"
             className={`crm-alert fixed top-4 right-4 z-50 shadow-lg ${isErrorMessage ? ' crm-alert--error' : ' crm-alert--success'}`}
             style={{ width: 'auto', maxWidth: '400px' }}
           >
-            <span>{message}</span>
+            <span>{messageText}</span>
             <button type="button" aria-label="Close alert" onClick={() => setMessage('')}>
               <X size={15} />
             </button>
@@ -663,13 +695,13 @@ export default function App() {
         )}
 
         {/* ── Alert banner ── */}
-        {message && (
+        {Boolean(messageText) && (
           <div
             role="alert"
             aria-live="polite"
             className={`crm-alert${isErrorMessage ? ' crm-alert--error' : ' crm-alert--success'}`}
           >
-            <span>{message}</span>
+            <span>{messageText}</span>
             <button type="button" aria-label="Close alert" onClick={() => setMessage('')}>
               <X size={15} />
             </button>
@@ -833,6 +865,15 @@ export default function App() {
                 </div>
               )}
 
+              {page === 'billing-reporting' && (
+                <div className="crm-legacy-page">
+                  <BillingReportingPage
+                    currentUser={currentUser}
+                    setMessage={setMessage}
+                  />
+                </div>
+              )}
+
               {page === 'users' && (
                 <div className="crm-legacy-page">
                   <UsersPage
@@ -840,6 +881,56 @@ export default function App() {
                   />
                 </div>
               )}
+
+              {page === 'billing-customers' && (
+                <div className="crm-legacy-page">
+                  <BillingCustomersPage
+                    currentUser={currentUser}
+                    setMessage={setMessage}
+                    globalSearch={globalSearch}
+                    canCreate={hasPermission('billing_customers', 'create')}
+                    canEdit={hasPermission('billing_customers', 'edit')}
+                    canDelete={hasPermission('billing_customers', 'delete')}
+                  />
+                </div>
+              )}
+
+              {page === 'billing-subscriptions' && (
+                <div className="crm-legacy-page">
+                  <BillingSubscriptionsPage
+                    currentUser={currentUser}
+                    setMessage={setMessage}
+                  />
+                </div>
+              )}
+
+              {page === 'billing-invoices' && (
+                <div className="crm-legacy-page">
+                  <BillingInvoicesPage
+                    currentUser={currentUser}
+                    setMessage={setMessage}
+                  />
+                </div>
+              )}
+
+              {page === 'billing-analytics' && (
+                <div className="crm-legacy-page">
+                  <BillingAnalyticsPage
+                    currentUser={currentUser}
+                    setMessage={setMessage}
+                  />
+                </div>
+              )}
+
+              {page === 'billing-payments' && (
+                <div className="crm-legacy-page">
+                  <BillingPaymentsPage
+                    currentUser={currentUser}
+                    setMessage={setMessage}
+                  />
+                </div>
+              )}
+
             </>
           )}
         </main>

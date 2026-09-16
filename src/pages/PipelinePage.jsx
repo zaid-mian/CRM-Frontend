@@ -2494,11 +2494,47 @@ export default function PipelinePage({
       {deleteStage && <Confirm danger title="Delete Stage" text={`Delete stage "${deleteStage.name}"? Stages with opportunities will prompt for card reassignment.`} confirmLabel="Delete" onCancel={() => setDeleteStage(null)} onConfirm={confirmDeleteStage} />}
       {pendingMove && <Confirm title="Move Opportunity" text={`${pendingMove.name}: ${pendingMove.from} to ${pendingMove.to}`} confirmLabel="Move" onCancel={() => setPendingMove(null)} onConfirm={confirmMove} />}
 
-      {/* Slide-out details drawer */}
+      {/* Center Details Modal */}
       {activeDrawerCard && (
-        <div className="account-drawer-layer" role="presentation">
-          <button className="account-drawer-backdrop" type="button" aria-label="Close details drawer" onClick={() => { setActiveDrawerCard(null); setDrawerMode(null); }} />
-          <aside className="drawer lf-drawer" style={{ pointerEvents: 'auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <div
+          role="presentation"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 10000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: 'rgba(15, 23, 42, 0.6)',
+            backdropFilter: 'blur(4px)',
+            padding: '20px',
+            pointerEvents: 'auto',
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setActiveDrawerCard(null);
+              setDrawerMode(null);
+            }
+          }}
+        >
+          <aside
+            style={{
+              position: 'relative',
+              zIndex: 10001,
+              width: '740px',
+              maxWidth: '96vw',
+              maxHeight: '90vh',
+              backgroundColor: '#ffffff',
+              borderRadius: '16px',
+              boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)',
+              display: 'flex',
+              flexDirection: 'column',
+              padding: '24px',
+              gap: '16px',
+              overflow: 'hidden',
+              pointerEvents: 'auto',
+            }}
+          >
             <header className="lf-drawer-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e5eaf1', paddingBottom: '12px' }}>
               <h3 className="font-weight-semibold" style={{ margin: 0, fontSize: '18px' }}>
                 {activeDrawerCard.type === 'lead' ? 'Lead Details' : 'Opportunity Details'}

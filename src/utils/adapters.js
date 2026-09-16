@@ -363,3 +363,67 @@ export function paymentUiToBackend(ui) {
     notes: ui.notes || '',
   };
 }
+
+
+/* ============================================================================
+ * 8. BILLING CUSTOMER ADAPTERS
+ * ============================================================================ */
+
+export function billingCustomerBackendToUi(cust) {
+  if (!cust) return null;
+  return {
+    id: cust.id,
+    customerNumber: cust.customer_number || `CUST-${cust.id}`,
+    name: cust.name || '',
+    email: cust.email || '',
+    phone: cust.phone || '',
+    billingAddressLine1: cust.billing_address_line1 || '',
+    billingAddressLine2: cust.billing_address_line2 || '',
+    billingCity: cust.billing_city || '',
+    billingState: cust.billing_state || '',
+    billingPostalCode: cust.billing_postal_code || '',
+    billingCountry: cust.billing_country || '',
+    currency: cust.currency || 'USD',
+    taxId: cust.tax_id || '',
+    taxExempt: Boolean(cust.tax_exempt),
+    defaultPaymentMethodId: cust.default_payment_method_id || '',
+    externalReferenceId: cust.external_reference_id || '',
+    organization: cust.organization || null,
+    isActive: Boolean(cust.is_active),
+    status: cust.is_active ? 'Active' : 'Inactive',
+    createdBy: cust.created_by || null,
+    createdAt: toDateOnly(cust.created_at),
+    updatedAt: toDateOnly(cust.updated_at),
+    metadata: cust.metadata || {},
+  };
+}
+
+export function billingCustomerUiToPayload(ui) {
+  if (!ui) return {};
+  const payload = {
+    name: (ui.name || '').trim(),
+    email: (ui.email || '').trim().toLowerCase(),
+    phone: (ui.phone || '').trim(),
+    billing_address_line1: (ui.billingAddressLine1 || '').trim(),
+    billing_address_line2: (ui.billingAddressLine2 || '').trim(),
+    billing_city: (ui.billingCity || '').trim(),
+    billing_state: (ui.billingState || '').trim(),
+    billing_postal_code: (ui.billingPostalCode || '').trim(),
+    billing_country: (ui.billingCountry || '').trim(),
+    currency: (ui.currency || 'USD').trim().toUpperCase(),
+    tax_id: (ui.taxId || '').trim(),
+    tax_exempt: Boolean(ui.taxExempt),
+    default_payment_method_id: (ui.defaultPaymentMethodId || '').trim(),
+    external_reference_id: (ui.externalReferenceId || '').trim(),
+  };
+
+  if (ui.customerNumber && ui.customerNumber.trim() && !ui.id) {
+    payload.customer_number = ui.customerNumber.trim();
+  }
+
+  if (ui.isActive !== undefined) {
+    payload.is_active = Boolean(ui.isActive);
+  }
+
+  return payload;
+}
