@@ -6,6 +6,10 @@
 [![Stripe](https://img.shields.io/badge/Stripe%20React-6.10.0-informational.svg)](https://stripe.com/)
 [![Build](https://img.shields.io/badge/Vite%20Build-Passing%20(1823%20modules)-brightgreen.svg)]()
 
+> ⚙️ **Backend REST API**: This frontend is backed by the multi-tenant Django REST API at [zaid-mian/crm](https://github.com/zaid-mian/crm).
+
+![AdaptCRM Showcase](assets/brag.gif)
+
 This repository contains the authoritative React single-page application for **AdaptCRM**, integrating the **CRM Sales Workspace**, the **Job Tracking System (JTS) Client Portal**, and the **Standalone Commercial Billing Suite** under a unified, multi-tenant interface with dynamic Role-Based Access Control (RBAC).
 
 ---
